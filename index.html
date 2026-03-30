@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <title>✨ Magic Hands</title>
+  <link rel="icon" href="data:,">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
@@ -58,6 +59,7 @@ const fxCanvas  = document.getElementById('fx-canvas');
 const ctx       = fxCanvas.getContext('2d');
 const video     = document.getElementById('video');
 const statusEl  = document.getElementById('status');
+const ripples   = [];
 let W = 0, H = 0;
 function resize() {
   W = vidCanvas.width = fxCanvas.width  = window.innerWidth;
@@ -169,7 +171,6 @@ function pushTrail(key, x, y, hue) {
 }
 
 // ── Ripples ───────────────────────────────────────────────────────────────────
-const ripples = [];
 class Ripple {
   constructor(x, y, hue) { this.x=x; this.y=y; this.hue=hue; this.r=0; this.life=1; this.maxR=rand(120,260); }
   update() { this.r = lerp(this.r, this.maxR, 0.06); this.life -= 0.014; }
@@ -558,14 +559,12 @@ function loadScript(url, label) {
 
 async function init() {
   try {
-    // Step 1: Load CDN scripts
+    // Step 1: Load MediaPipe Hands
     const HANDS_VER = '0.4.1675469240';
-    await loadScript(`https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js`, 'camera utils');
     await loadScript(`https://cdn.jsdelivr.net/npm/@mediapipe/hands@${HANDS_VER}/hands.js`, 'hands model');
 
     // Step 2: Verify globals exist
     if (typeof Hands === 'undefined') throw new Error('Hands class not found — script loaded but empty');
-    if (typeof Camera === 'undefined') throw new Error('Camera class not found');
 
     // Step 3: Create hand tracker
     statusEl.textContent = 'Initializing hand tracker…';
@@ -599,11 +598,15 @@ async function init() {
     console.log('[MagicHands] ✅ Model warm-up complete');
 
     // Step 5: Start camera
-    statusEl.textContent = 'Starting camera…';
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('getUserMedia is not supported in this browser');
+    }
+    statusEl.textContent = 'Allow camera access…';
     console.log('[MagicHands] Requesting camera…');
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
     });
+    statusEl.textContent = 'Starting camera…';
     video.srcObject = stream;
     video.setAttribute('playsinline', '');
     await video.play();

@@ -1,6 +1,6 @@
 # ✨ Magic Hands
 
-Real-time hand tracking with magical visual effects, built with [MediaPipe Tasks Vision](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker) and plain Canvas 2D — no frameworks, no build step, single HTML file.
+Real-time hand tracking with magical visual effects, built with [MediaPipe Hands](https://chuoling.github.io/mediapipe/solutions/hands.html) and plain Canvas 2D — no frameworks, no build step, single HTML file.
 
 ## Demo
 
@@ -24,16 +24,16 @@ Open `index.html` via any local HTTP server (e.g. `python3 -m http.server 8080`)
 
 ## How it works
 
-- **MediaPipe Hand Landmarker** detects 21 3D landmarks per hand at video frame rate
+- **MediaPipe Hands** detects 21 3D landmarks per hand at video frame rate
 - All rendering is pure Canvas 2D — no WebGL required
 - Hand velocity is tracked per-landmark to drive speed-reactive effects
 - Particles have physics: gravity, drag, and hand-push interaction (90px radius)
 - Lightning bolts are cached for ~6 frames to prevent flickering
-- GPU delegate attempted first, falls back to CPU automatically
+- MediaPipe downloads its model/WASM assets on first launch, then starts continuous tracking from the camera
 
 ## Stack
 
-- [MediaPipe Tasks Vision](https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision) `0.10.14` (WASM)
-- Vanilla JS ES Modules
+- [@mediapipe/hands](https://cdn.jsdelivr.net/npm/@mediapipe/hands) `0.4.1675469240`
+- Vanilla JS
 - Canvas 2D API
 - No build step
