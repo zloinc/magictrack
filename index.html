@@ -30,8 +30,6 @@
     #video-canvas { z-index: 0; }
     #fx-canvas    { z-index: 1; }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
@@ -544,35 +542,95 @@ function render() {
   if (activeFx==='ripple')    drawRippleFx(allPts);
 }
 
-// ── MediaPipe init (old API — bundles model via CDN, no separate download) ────
-window.addEventListener('load', () => {
-  statusEl.textContent = 'Loading model…';
+// ── Dynamic script loader with error handling ────────────────────────────────
+function loadScript(url, label) {
+  return new Promise((resolve, reject) => {
+    statusEl.textContent = `Loading ${label}…`;
+    console.log(`[MagicHands] Loading ${label}: ${url}`);
+    const s = document.createElement('script');
+    s.src = url;
+    s.crossOrigin = 'anonymous';
+    s.onload  = () => { console.log(`[MagicHands] ✅ ${label} loaded`); resolve(); };
+    s.onerror = () => reject(new Error(`Failed to load ${label} from ${url}`));
+    document.head.appendChild(s);
+  });
+}
 
-  const hands = new Hands({
-    locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-  });
-  hands.setOptions({
-    maxNumHands: 2,
-    modelComplexity: 1,
-    minDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5,
-  });
-  hands.onResults(results => {
-    lastResults = results;
-    const n = results.multiHandLandmarks ? results.multiHandLandmarks.length : 0;
-    statusEl.textContent = n > 0 ? `${n} hand${n>1?'s':''} detected ✨` : 'Show your hands ✨';
-  });
+async function init() {
+  try {
+    // Step 1: Load CDN scripts
+    const HANDS_VER = '0.4.1675469240';
+    await loadScript(`https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js`, 'camera utils');
+    await loadScript(`https://cdn.jsdelivr.net/npm/@mediapipe/hands@${HANDS_VER}/hands.js`, 'hands model');
 
-  const camera = new Camera(video, {
-    onFrame: async () => { await hands.send({ image: video }); },
-    width: 1280, height: 720
-  });
-  camera.start()
-    .then(() => { statusEl.textContent = 'Show your hands ✨'; })
-    .catch(err => { statusEl.textContent = `❌ Camera: ${err.message}`; });
+    // Step 2: Verify globals exist
+    if (typeof Hands === 'undefined') throw new Error('Hands class not found — script loaded but empty');
+    if (typeof Camera === 'undefined') throw new Error('Camera class not found');
 
-  render();
-});
+    // Step 3: Create hand tracker
+    statusEl.textContent = 'Initializing hand tracker…';
+    console.log('[MagicHands] Creating Hands instance…');
+    const hands = new Hands({
+      locateFile: file => {
+        const url = `https://cdn.jsdelivr.net/npm/@mediapipe/hands@${HANDS_VER}/${file}`;
+        console.log(`[MagicHands] locateFile: ${file} → ${url}`);
+        return url;
+      }
+    });
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    });
+    hands.onResults(results => {
+      lastResults = results;
+      const n = results.multiHandLandmarks ? results.multiHandLandmarks.length : 0;
+      statusEl.textContent = n > 0 ? `${n} hand${n>1?'s':''} detected` : 'Show your hands';
+    });
+
+    // Step 4: Warm up the model with a blank canvas (forces WASM/model download)
+    statusEl.textContent = 'Downloading model files…';
+    console.log('[MagicHands] Warming up model with blank frame…');
+    const tmp = document.createElement('canvas');
+    tmp.width = 320; tmp.height = 240;
+    tmp.getContext('2d').fillRect(0, 0, 320, 240);
+    await hands.send({ image: tmp });
+    console.log('[MagicHands] ✅ Model warm-up complete');
+
+    // Step 5: Start camera
+    statusEl.textContent = 'Starting camera…';
+    console.log('[MagicHands] Requesting camera…');
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }
+    });
+    video.srcObject = stream;
+    video.setAttribute('playsinline', '');
+    await video.play();
+    console.log(`[MagicHands] ✅ Camera started: ${video.videoWidth}x${video.videoHeight}`);
+    statusEl.textContent = 'Show your hands';
+
+    // Step 6: Detection loop (manual rAF, no Camera utility dependency)
+    let busy = false;
+    async function detect() {
+      if (video.readyState >= 2 && !busy) {
+        busy = true;
+        try { await hands.send({ image: video }); } catch(e) { console.warn('detect:', e); }
+        busy = false;
+      }
+      requestAnimationFrame(detect);
+    }
+    detect();
+
+  } catch (err) {
+    statusEl.textContent = `❌ ${err.message}`;
+    statusEl.style.color = '#ff6666';
+    console.error('[MagicHands] Init failed:', err);
+  }
+}
+
+render();
+init();
 </script>
 </body>
 </html>
