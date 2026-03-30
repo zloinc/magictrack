@@ -47,7 +47,6 @@
   <div class="btn" data-fx="rigging">🦴 Rigging</div>
   <div class="btn" data-fx="fireworks">🎆 Fireworks</div>
   <div class="btn" data-fx="orbs">🔮 Orbs</div>
-  <div class="btn" data-fx="ripple">🌊 Ripple</div>
 </div>
 <div id="status">Loading model…</div>
 
@@ -59,12 +58,10 @@ const fxCanvas  = document.getElementById('fx-canvas');
 const ctx       = fxCanvas.getContext('2d');
 const video     = document.getElementById('video');
 const statusEl  = document.getElementById('status');
-const ripples   = [];
 let W = 0, H = 0;
 function resize() {
   W = vidCanvas.width = fxCanvas.width  = window.innerWidth;
   H = vidCanvas.height = fxCanvas.height = window.innerHeight;
-  if (typeof ripples !== 'undefined') ripples.length = 0;
 }
 window.addEventListener('resize', resize); resize();
 
@@ -75,7 +72,7 @@ document.querySelectorAll('.btn').forEach(btn => {
     document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     activeFx = btn.dataset.fx;
-    particles.length = 0; ripples.length = 0;
+    particles.length = 0;
     for (const k in trails) delete trails[k];
     for (const k in orbs)   delete orbs[k];
   });
@@ -90,12 +87,52 @@ const clamp  = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const lm2s   = lm => ({ x: (1 - lm.x) * W, y: lm.y * H });
 
 const TIPS = [4, 8, 12, 16, 20];
+const FINGER_CHAINS = {
+  4: [1,2,3,4],
+  8: [5,6,7,8],
+  12: [9,10,11,12],
+  16: [13,14,15,16],
+  20: [17,18,19,20],
+};
 const HAND_HUE = [200, 300];
 const CONNECTIONS = [
   [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
   [5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],
   [13,17],[17,18],[18,19],[19,20],[0,17]
 ];
+
+function rawDist(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
+}
+
+function getOpenFingerIndices(rawLms) {
+  const open = [];
+  const thumbOpen =
+    rawDist(rawLms[4], rawLms[0]) > rawDist(rawLms[3], rawLms[0]) * 1.12 &&
+    rawDist(rawLms[4], rawLms[5]) > rawDist(rawLms[3], rawLms[5]) * 1.05;
+  if (thumbOpen) open.push(4);
+
+  [[8,6,5], [12,10,9], [16,14,13], [20,18,17]].forEach(([tip, pip, mcp]) => {
+    if (rawLms[tip].y < rawLms[pip].y - 0.015 && rawLms[pip].y < rawLms[mcp].y) open.push(tip);
+  });
+  return open;
+}
+
+function buildHandState(rawLms, pts, hi) {
+  const activeTipIndices = getOpenFingerIndices(rawLms);
+  const activeFingers = activeTipIndices.map(idx => ({
+    idx,
+    fi: TIPS.indexOf(idx),
+    p: pts[idx],
+  }));
+  return {
+    hi,
+    pts,
+    activeTipIndices,
+    activeFingers,
+    fingerCount: activeFingers.length,
+  };
+}
 
 // ── Velocity tracking ─────────────────────────────────────────────────────────
 const prevLm   = {};
@@ -170,23 +207,6 @@ function pushTrail(key, x, y, hue) {
   if (trails[key].length > 50) trails[key].shift();
 }
 
-// ── Ripples ───────────────────────────────────────────────────────────────────
-class Ripple {
-  constructor(x, y, hue) { this.x=x; this.y=y; this.hue=hue; this.r=0; this.life=1; this.maxR=rand(120,260); }
-  update() { this.r = lerp(this.r, this.maxR, 0.06); this.life -= 0.014; }
-  draw() {
-    if (this.life <= 0) return;
-    for (let i = 0; i < 3; i++) {
-      const rr = Math.max(0, this.r - (i / 3) * this.maxR * 0.4);
-      ctx.save(); ctx.globalAlpha = this.life * (1 - i / 3) * 0.7;
-      ctx.strokeStyle = `hsla(${this.hue + i * 20},100%,70%,1)`;
-      ctx.lineWidth = 2.5 - i * 0.6; ctx.shadowBlur = 12;
-      ctx.shadowColor = `hsla(${this.hue},100%,65%,0.7)`;
-      ctx.beginPath(); ctx.arc(this.x, this.y, rr, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
-    }
-  }
-}
-
 // ── Orbs ──────────────────────────────────────────────────────────────────────
 const orbs = {};
 function getOrb(key, tx, ty, hue) {
@@ -220,25 +240,31 @@ function capsulePath(x1, y1, x2, y2, thick) {
 // ════════ EFFECTS ════════════════════════════════════════════════════════════
 
 // 🕸 WEB
-function drawWeb(allPts) {
-  allPts.forEach((pts, hi) => {
-    const hue = HAND_HUE[hi % 2], tips = TIPS.map(i => pts[i]);
-    CONNECTIONS.forEach(([a, b]) => {
-      ctx.save(); ctx.strokeStyle = `hsla(${hue},80%,60%,0.45)`;
-      ctx.lineWidth = 1.5; ctx.shadowBlur = 5; ctx.shadowColor = `hsla(${hue},100%,60%,0.4)`;
-      ctx.beginPath(); ctx.moveTo(pts[a].x, pts[a].y); ctx.lineTo(pts[b].x, pts[b].y); ctx.stroke(); ctx.restore();
+function drawWeb(handStates) {
+  handStates.forEach(state => {
+    const { hi, pts, activeFingers, activeTipIndices } = state;
+    const hue = HAND_HUE[hi % 2];
+    activeTipIndices.forEach(idx => {
+      const chain = FINGER_CHAINS[idx];
+      for (let i = 0; i < chain.length; i++) {
+        const a = i === 0 ? 0 : chain[i - 1];
+        const b = chain[i];
+        ctx.save(); ctx.strokeStyle = `hsla(${hue},80%,60%,0.42)`;
+        ctx.lineWidth = 1.5; ctx.shadowBlur = 6; ctx.shadowColor = `hsla(${hue},100%,60%,0.42)`;
+        ctx.beginPath(); ctx.moveTo(pts[a].x, pts[a].y); ctx.lineTo(pts[b].x, pts[b].y); ctx.stroke(); ctx.restore();
+      }
     });
-    for (let a = 0; a < tips.length; a++) for (let b = a + 1; b < tips.length; b++) {
-      const d = dist2d(tips[a], tips[b]), alpha = Math.max(0, 1 - d / 340);
+    for (let a = 0; a < activeFingers.length; a++) for (let b = a + 1; b < activeFingers.length; b++) {
+      const d = dist2d(activeFingers[a].p, activeFingers[b].p), alpha = Math.max(0, 1 - d / 340);
       if (alpha < 0.02) continue;
-      const grad = ctx.createLinearGradient(tips[a].x, tips[a].y, tips[b].x, tips[b].y);
+      const grad = ctx.createLinearGradient(activeFingers[a].p.x, activeFingers[a].p.y, activeFingers[b].p.x, activeFingers[b].p.y);
       grad.addColorStop(0, `hsla(${hue + a * 12},100%,70%,1)`);
       grad.addColorStop(1, `hsla(${hue + b * 12},100%,70%,1)`);
       ctx.save(); ctx.globalAlpha = alpha * 0.85; ctx.strokeStyle = grad;
       ctx.lineWidth = 3 * alpha; ctx.shadowBlur = 14; ctx.shadowColor = `hsla(${hue},100%,65%,0.7)`;
-      ctx.beginPath(); ctx.moveTo(tips[a].x, tips[a].y); ctx.lineTo(tips[b].x, tips[b].y); ctx.stroke(); ctx.restore();
+      ctx.beginPath(); ctx.moveTo(activeFingers[a].p.x, activeFingers[a].p.y); ctx.lineTo(activeFingers[b].p.x, activeFingers[b].p.y); ctx.stroke(); ctx.restore();
     }
-    tips.forEach((p, fi) => drawDot(p.x, p.y, hue + fi * 14));
+    activeFingers.forEach(({ p, fi }) => drawDot(p.x, p.y, hue + fi * 14));
   });
 }
 
@@ -314,21 +340,21 @@ function drawWarpLine(x1, y1, x2, y2, hue) {
   }
   ctx.restore();
 }
-function drawWarp(allPts) {
-  allPts.forEach((pts, hi) => {
-    const hue = HAND_HUE[hi%2], tips = TIPS.map(i => pts[i]);
-    for (let a = 0; a < tips.length; a++) for (let b = a + 1; b < tips.length; b++) {
-      const d = dist2d(tips[a], tips[b]);
-      if (d < 320) drawWarpLine(tips[a].x, tips[a].y, tips[b].x, tips[b].y, hue + a * 32 + b * 18);
+function drawWarp(handStates) {
+  handStates.forEach(state => {
+    const { hi, activeFingers } = state;
+    const hue = HAND_HUE[hi%2];
+    for (let a = 0; a < activeFingers.length; a++) for (let b = a + 1; b < activeFingers.length; b++) {
+      const d = dist2d(activeFingers[a].p, activeFingers[b].p);
+      if (d < 320) drawWarpLine(activeFingers[a].p.x, activeFingers[a].p.y, activeFingers[b].p.x, activeFingers[b].p.y, hue + a * 32 + b * 18);
     }
-    tips.forEach((p, fi) => drawDot(p.x, p.y, hue + fi * 14));
+    activeFingers.forEach(({ p, fi }) => drawDot(p.x, p.y, hue + fi * 14));
   });
-  if (allPts.length >= 2) {
-    const tips0 = TIPS.map(i => allPts[0][i]);
-    const tips1 = TIPS.map(i => allPts[1][i]);
-    for (let a = 0; a < tips0.length; a++) for (let b = 0; b < tips1.length; b++) {
-      const d = dist2d(tips0[a], tips1[b]);
-      if (d < 420) drawWarpLine(tips0[a].x, tips0[a].y, tips1[b].x, tips1[b].y, 250 + a * 18 + b * 26);
+  if (handStates.length >= 2) {
+    const active0 = handStates[0].activeFingers, active1 = handStates[1].activeFingers;
+    for (let a = 0; a < active0.length; a++) for (let b = 0; b < active1.length; b++) {
+      const d = dist2d(active0[a].p, active1[b].p);
+      if (d < 420) drawWarpLine(active0[a].p.x, active0[a].p.y, active1[b].p.x, active1[b].p.y, 250 + a * 18 + b * 26);
     }
   }
 }
@@ -356,31 +382,33 @@ function drawLightningLine(x1, y1, x2, y2, hue, key) {
     ctx.stroke(); ctx.restore();
   });
 }
-function drawLightningFx(allPts) {
-  allPts.forEach((pts, hi) => {
-    const hue = HAND_HUE[hi%2], tips = TIPS.map(i => pts[i]);
-    for (let a = 0; a < tips.length; a++) for (let b = a+1; b < tips.length; b++) {
-      if (dist2d(tips[a], tips[b]) < 280)
-        drawLightningLine(tips[a].x,tips[a].y,tips[b].x,tips[b].y, hue+(a+b)*10, `h${hi}_${a}_${b}`);
+function drawLightningFx(handStates) {
+  handStates.forEach(state => {
+    const { hi, activeFingers } = state;
+    const hue = HAND_HUE[hi%2];
+    for (let a = 0; a < activeFingers.length; a++) for (let b = a+1; b < activeFingers.length; b++) {
+      if (dist2d(activeFingers[a].p, activeFingers[b].p) < 280)
+        drawLightningLine(activeFingers[a].p.x,activeFingers[a].p.y,activeFingers[b].p.x,activeFingers[b].p.y, hue+(a+b)*10, `h${hi}_${activeFingers[a].idx}_${activeFingers[b].idx}`);
     }
-    tips.forEach((p, fi) => drawDot(p.x, p.y, hue + fi * 14));
+    activeFingers.forEach(({ p, fi }) => drawDot(p.x, p.y, hue + fi * 14));
   });
-  if (allPts.length >= 2) {
-    TIPS.forEach((idx, fi) => {
-      const p0 = allPts[0][idx], p1 = allPts[1][idx];
-      if (dist2d(p0,p1) < 560)
-        drawLightningLine(p0.x,p0.y,p1.x,p1.y, 220+fi*22, `cross_${fi}`);
-    });
+  if (handStates.length >= 2) {
+    const active0 = handStates[0].activeFingers, active1 = handStates[1].activeFingers;
+    for (const f0 of active0) for (const f1 of active1) {
+      if (dist2d(f0.p,f1.p) < 560)
+        drawLightningLine(f0.p.x,f0.p.y,f1.p.x,f1.p.y, 220+f0.fi*16+f1.fi*22, `cross_${f0.idx}_${f1.idx}`);
+    }
   }
   for (const k in boltCache) if (boltCache[k].ttl <= 0) delete boltCache[k];
 }
 
 // ✨ PARTICLES
-function drawParticlesFx(allPts) {
-  allPts.forEach((pts, hi) => {
+function drawParticlesFx(handStates) {
+  handStates.forEach(state => {
+    const { hi, activeFingers } = state;
     const hue = HAND_HUE[hi%2];
-    TIPS.forEach((idx, fi) => {
-      const p = pts[idx], v = tipVel(hi, fi);
+    activeFingers.forEach(({ p, fi }) => {
+      const v = tipVel(hi, fi);
       drawDot(p.x, p.y, hue + fi * 18);
       const rate = 0.15 + clamp(v.speed/8, 0, 0.85);
       if (Math.random() < rate) spawnAt(p.x, p.y, hue+fi*18, Math.ceil(1+v.speed*.4), v.vx, v.vy);
@@ -389,58 +417,65 @@ function drawParticlesFx(allPts) {
 }
 
 // 🔥 TRAILS
-function drawTrailsFx(allPts) {
-  allPts.forEach((pts, hi) => {
+function drawTrailsFx(handStates) {
+  const activeKeys = new Set();
+  handStates.forEach(state => {
+    const { hi, activeFingers } = state;
     const hue = HAND_HUE[hi%2];
-    TIPS.forEach((idx, fi) => {
-      const p = pts[idx];
+    activeFingers.forEach(({ p, fi }) => {
+      const key = `${hi}_${fi}`;
+      activeKeys.add(key);
       drawDot(p.x, p.y, hue + fi * 18);
-      pushTrail(`${hi}_${fi}`, p.x, p.y, hue + fi * 18);
+      pushTrail(key, p.x, p.y, hue + fi * 18);
     });
   });
+  for (const key of Object.keys(trails)) if (!activeKeys.has(key)) delete trails[key];
 }
 
 // 🦴 RIGGING
-function drawRigging(allPts) {
-  allPts.forEach((pts, hi) => {
-    const hue = HAND_HUE[hi%2], n = pts.length;
+function drawRigging(handStates) {
+  handStates.forEach(state => {
+    const { hi, activeFingers } = state;
+    const hue = HAND_HUE[hi%2], n = activeFingers.length;
     for (let a = 0; a < n; a++) for (let b = a+1; b < n; b++) {
-      const d = dist2d(pts[a], pts[b]), alpha = Math.max(0, 1 - d/420);
+      const pa = activeFingers[a].p, pb = activeFingers[b].p;
+      const d = dist2d(pa, pb), alpha = Math.max(0, 1 - d/420);
       if (alpha < 0.04) continue;
-      const grad = ctx.createLinearGradient(pts[a].x,pts[a].y,pts[b].x,pts[b].y);
+      const grad = ctx.createLinearGradient(pa.x,pa.y,pb.x,pb.y);
       grad.addColorStop(0, `hsla(${hue+a*5},100%,72%,1)`);
       grad.addColorStop(1, `hsla(${hue+b*5},100%,72%,1)`);
       ctx.save(); ctx.globalAlpha = alpha*.6; ctx.strokeStyle = grad;
       ctx.lineWidth = 1.2+alpha*2; ctx.shadowBlur = 8; ctx.shadowColor = `hsla(${hue},100%,65%,0.5)`;
-      ctx.beginPath(); ctx.moveTo(pts[a].x,pts[a].y); ctx.lineTo(pts[b].x,pts[b].y); ctx.stroke(); ctx.restore();
+      ctx.beginPath(); ctx.moveTo(pa.x,pa.y); ctx.lineTo(pb.x,pb.y); ctx.stroke(); ctx.restore();
     }
-    pts.forEach((p, i) => {
-      const dh = hue+i*6;
+    activeFingers.forEach(({ p, fi }) => {
+      const dh = hue+fi*10;
       ctx.save(); ctx.shadowBlur=12; ctx.shadowColor=`hsla(${dh},100%,70%,0.9)`;
       ctx.fillStyle=`hsla(${dh},100%,90%,0.9)`; ctx.beginPath();
-      ctx.arc(p.x,p.y,i===0?6:TIPS.includes(i)?5:3.5,0,Math.PI*2); ctx.fill(); ctx.restore();
+      ctx.arc(p.x,p.y,5,0,Math.PI*2); ctx.fill(); ctx.restore();
     });
   });
-  if (allPts.length >= 2) {
-    const [p0s, p1s] = allPts;
-    for (let a = 0; a < p0s.length; a++) for (let b = 0; b < p1s.length; b++) {
-      const d = dist2d(p0s[a],p1s[b]), alpha = Math.max(0, 1-d/480);
+  if (handStates.length >= 2) {
+    const active0 = handStates[0].activeFingers, active1 = handStates[1].activeFingers;
+    for (let a = 0; a < active0.length; a++) for (let b = 0; b < active1.length; b++) {
+      const d = dist2d(active0[a].p,active1[b].p), alpha = Math.max(0, 1-d/480);
       if (alpha < 0.04) continue;
       ctx.save(); ctx.globalAlpha = alpha*.3;
       ctx.strokeStyle = `hsla(${260+(a+b)*4},100%,75%,1)`;
       ctx.lineWidth = 0.8+alpha*1.5; ctx.shadowBlur=5; ctx.shadowColor=`hsla(260,100%,65%,0.4)`;
-      ctx.beginPath(); ctx.moveTo(p0s[a].x,p0s[a].y); ctx.lineTo(p1s[b].x,p1s[b].y); ctx.stroke(); ctx.restore();
+      ctx.beginPath(); ctx.moveTo(active0[a].p.x,active0[a].p.y); ctx.lineTo(active1[b].p.x,active1[b].p.y); ctx.stroke(); ctx.restore();
     }
   }
 }
 
 // 🎆 FIREWORKS
 const fwPrevSpeed = {};
-function drawFireworksFx(allPts) {
-  allPts.forEach((pts, hi) => {
+function drawFireworksFx(handStates) {
+  handStates.forEach(state => {
+    const { hi, activeFingers } = state;
     const hue = HAND_HUE[hi%2];
-    TIPS.forEach((idx, fi) => {
-      const p = pts[idx], v = tipVel(hi,fi), key = `${hi}_${fi}`;
+    activeFingers.forEach(({ p, fi }) => {
+      const v = tipVel(hi,fi), key = `${hi}_${fi}`;
       const prev = fwPrevSpeed[key] || 0;
       if (v.speed > 9 && prev < 5) {
         const n = Math.floor(rand(25,55));
@@ -458,12 +493,15 @@ function drawFireworksFx(allPts) {
 }
 
 // 🔮 ORBS
-function drawOrbsFx(allPts) {
+function drawOrbsFx(handStates) {
   const t = Date.now()/1000;
-  allPts.forEach((pts, hi) => {
+  const activeKeys = new Set();
+  handStates.forEach(state => {
+    const { hi, activeFingers } = state;
     const hue = HAND_HUE[hi%2];
-    TIPS.forEach((idx, fi) => {
-      const p = pts[idx], key = `${hi}_${fi}`;
+    activeFingers.forEach(({ p, fi }) => {
+      const key = `${hi}_${fi}`;
+      activeKeys.add(key);
       const orb = getOrb(key, p.x, p.y, hue+fi*20);
       orb.x = lerp(orb.x, orb.tx, 0.12); orb.y = lerp(orb.y, orb.ty, 0.12);
       orb.angle += 0.04 + fi*.008;
@@ -483,45 +521,17 @@ function drawOrbsFx(allPts) {
       drawDot(orb.x,orb.y,orb.hue,16);
     });
   });
-  if (allPts.length >= 2) {
-    TIPS.forEach((_,fi) => {
-      const o0=orbs[`0_${fi}`], o1=orbs[`1_${fi}`];
-      if (!o0||!o1) return;
-      const d=dist2d(o0,o1); if (d>500) return;
+  for (const key of Object.keys(orbs)) if (!activeKeys.has(key)) delete orbs[key];
+  if (handStates.length >= 2) {
+    for (const f0 of handStates[0].activeFingers) for (const f1 of handStates[1].activeFingers) {
+      const o0=orbs[`0_${f0.fi}`], o1=orbs[`1_${f1.fi}`];
+      if (!o0||!o1) continue;
+      const d=dist2d(o0,o1); if (d>500) continue;
       ctx.save(); ctx.globalAlpha=(1-d/500)*.6;
-      ctx.strokeStyle=`hsla(${250+fi*20},100%,70%,1)`; ctx.lineWidth=2;
-      ctx.shadowBlur=16; ctx.shadowColor=`hsla(${250+fi*20},100%,65%,0.8)`;
+      ctx.strokeStyle=`hsla(${250+f0.fi*14+f1.fi*8},100%,70%,1)`; ctx.lineWidth=2;
+      ctx.shadowBlur=16; ctx.shadowColor=`hsla(${250+f0.fi*14+f1.fi*8},100%,65%,0.8)`;
       ctx.beginPath(); ctx.moveTo(o0.x,o0.y); ctx.lineTo(o1.x,o1.y); ctx.stroke(); ctx.restore();
-    });
-  }
-}
-
-// 🌊 RIPPLE
-const ripplePrev = {};
-function drawRippleFx(allPts) {
-  allPts.forEach((pts, hi) => {
-    const hue = HAND_HUE[hi%2];
-    TIPS.forEach((idx, fi) => {
-      const p = pts[idx], key = `${hi}_${fi}`, v = tipVel(hi,fi);
-      const prev = ripplePrev[key];
-      if (!prev || dist2d(p,prev) > 12)
-        if (Math.random() < 0.25+clamp(v.speed/20,0,0.55))
-          ripples.push(new Ripple(p.x,p.y, hue+fi*20));
-      ripplePrev[key] = {x:p.x,y:p.y};
-      drawDot(p.x,p.y,hue+fi*14);
-    });
-  });
-  if (allPts.length >= 2) {
-    TIPS.forEach((idx,fi) => {
-      const p0=allPts[0][idx], p1=allPts[1][idx], d=dist2d(p0,p1);
-      if (d < 400) {
-        const mx=(p0.x+p1.x)/2, my=(p0.y+p1.y)/2, pulse=0.6+0.4*Math.sin(Date.now()/200+fi);
-        const rg=ctx.createRadialGradient(mx,my,0,mx,my,60*pulse);
-        rg.addColorStop(0,`hsla(${260+fi*20},100%,70%,0.4)`);
-        rg.addColorStop(1,`hsla(${260+fi*20},100%,50%,0)`);
-        ctx.save(); ctx.fillStyle=rg; ctx.beginPath(); ctx.arc(mx,my,60*pulse,0,Math.PI*2); ctx.fill(); ctx.restore();
-      }
-    });
+    }
   }
 }
 
@@ -544,10 +554,6 @@ function render() {
     particles[i].update(); particles[i].draw();
     if (particles[i].life <= 0) particles.splice(i,1);
   }
-  for (let i = ripples.length-1; i >= 0; i--) {
-    ripples[i].update(); ripples[i].draw();
-    if (ripples[i].life <= 0) ripples.splice(i,1);
-  }
   if (activeFx === 'trails') {
     for (const key of Object.keys(trails)) {
       const pts = trails[key];
@@ -562,12 +568,24 @@ function render() {
 
   // Need multiHandLandmarks from old API
   const rawHands = lastResults && lastResults.multiHandLandmarks;
-  if (!rawHands || rawHands.length === 0) return;
+  if (!rawHands || rawHands.length === 0) {
+    if (activeFx === 'trails') for (const k in trails) delete trails[k];
+    if (activeFx === 'orbs') for (const k in orbs) delete orbs[k];
+    return;
+  }
 
   const allPts = rawHands.map(lms => lms.map(lm2s));
+  const handStates = rawHands.map((lms, hi) => buildHandState(lms, allPts[hi], hi));
   updateVelocity(allPts);
+  if (handStates.every(state => state.fingerCount === 0)) {
+    if (activeFx === 'trails') for (const k in trails) delete trails[k];
+    if (activeFx === 'orbs') for (const k in orbs) delete orbs[k];
+    return;
+  }
 
-  allPts.forEach((pts, hi) => {
+  handStates.forEach(state => {
+    const { hi, pts, fingerCount } = state;
+    if (fingerCount === 0) return;
     const hue=HAND_HUE[hi%2], palm=pts[0];
     const pg=ctx.createRadialGradient(palm.x,palm.y,0,palm.x,palm.y,75);
     pg.addColorStop(0,`hsla(${hue},100%,70%,0.15)`);
@@ -576,15 +594,14 @@ function render() {
     ctx.arc(palm.x,palm.y,75,0,Math.PI*2); ctx.fill(); ctx.restore();
   });
 
-  if (activeFx==='web')       drawWeb(allPts);
-  if (activeFx==='warp')      drawWarp(allPts);
-  if (activeFx==='lightning') drawLightningFx(allPts);
-  if (activeFx==='particles') drawParticlesFx(allPts);
-  if (activeFx==='trails')    drawTrailsFx(allPts);
-  if (activeFx==='rigging')   drawRigging(allPts);
-  if (activeFx==='fireworks') drawFireworksFx(allPts);
-  if (activeFx==='orbs')      drawOrbsFx(allPts);
-  if (activeFx==='ripple')    drawRippleFx(allPts);
+  if (activeFx==='web')       drawWeb(handStates);
+  if (activeFx==='warp')      drawWarp(handStates);
+  if (activeFx==='lightning') drawLightningFx(handStates);
+  if (activeFx==='particles') drawParticlesFx(handStates);
+  if (activeFx==='trails')    drawTrailsFx(handStates);
+  if (activeFx==='rigging')   drawRigging(handStates);
+  if (activeFx==='fireworks') drawFireworksFx(handStates);
+  if (activeFx==='orbs')      drawOrbsFx(handStates);
 }
 
 // ── Dynamic script loader with error handling ────────────────────────────────
@@ -628,8 +645,18 @@ async function init() {
     });
     hands.onResults(results => {
       lastResults = results;
-      const n = results.multiHandLandmarks ? results.multiHandLandmarks.length : 0;
-      statusEl.textContent = n > 0 ? `${n} hand${n>1?'s':''} detected` : 'Show your hands';
+      const rawHands = results.multiHandLandmarks || [];
+      if (rawHands.length === 0) {
+        statusEl.textContent = 'Show your hands';
+        return;
+      }
+      const handStates = rawHands.map((lms, hi) => buildHandState(lms, lms, hi));
+      const counts = handStates.map((state, hi) =>
+        state.fingerCount === 0
+          ? `Hand ${hi + 1}: fist`
+          : `Hand ${hi + 1}: ${state.fingerCount} finger${state.fingerCount > 1 ? 's' : ''}`
+      );
+      statusEl.textContent = counts.join(' | ');
     });
 
     // Step 4: Warm up the model with a blank canvas (forces WASM/model download)

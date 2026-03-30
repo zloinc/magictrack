@@ -20,7 +20,6 @@ Open `index.html` via any local HTTP server (e.g. `python3 -m http.server 8080`)
 | 🦴 **Rigging** | Every hand landmark connected to every other — 210 lines per hand |
 | 🎆 **Fireworks** | Slow = light trail; sudden fast flick = particle explosion burst |
 | 🔮 **Orbs** | Smooth-lagging orbs with orbiting ring particles; opposite hand orbs connect with beams |
-| 🌊 **Ripple** | Expanding concentric rings from finger movement; interference glow between hands |
 
 ## How it works
 
