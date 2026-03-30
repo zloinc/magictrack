@@ -13,14 +13,14 @@ Open `index.html` via any local HTTP server (e.g. `python3 -m http.server 8080`)
 | Mode | Description |
 |------|-------------|
 | 🕸 **Web** | Glowing lines between all fingertips + hand skeleton |
-| 🌀 **Warp** | Blurred video strips between fingers with animated turbulence strands |
+| 🌀 **Warp** | Color-mixed slime bridges between nearby raised fingers |
 | ⚡ **Lightning** | Fractal electric bolts between fingers — within hand and across both hands |
 | ✨ **Particles** | Sparks that react to hand speed, inherit velocity, and scatter when your hand pushes through them |
-| 🔥 **Trails** | Glowing motion trails following each fingertip |
-| 🌈 **Prism** | Rainbow ribbon trails that stack into neon spectral bands behind raised fingers |
+| 🛡 **Aura** | Open-palm energy shield with concentric halos and finger beams |
 | 🦴 **Rigging** | Every hand landmark connected to every other — 210 lines per hand |
 | 🎆 **Fireworks** | Slow = light trail; sudden fast flick = particle explosion burst |
 | 💥 **Nova** | Two-finger gesture spawns bright radial bursts and particle detonations from the gesture center |
+| 🌀 **Portal** | Close palms form a glowing portal with arcs linking active fingers across hands |
 | 🔮 **Orbs** | Smooth-lagging orbs with orbiting ring particles; opposite hand orbs connect with beams |
 
 ## How it works
