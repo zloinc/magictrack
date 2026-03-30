@@ -349,6 +349,19 @@ function drawRigLabel(x, y, text, hue, alpha = 1) {
   ctx.restore();
 }
 
+function drawRigParentLine(a, b, hue, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = `hsla(${hue},100%,78%,0.65)`;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
 // ── Capsule clip ──────────────────────────────────────────────────────────────
 function capsulePath(x1, y1, x2, y2, thick) {
   const angle = Math.atan2(y2 - y1, x2 - x1);
@@ -695,6 +708,8 @@ function drawRigging(handStates) {
     if (fingerCount === 0) return;
     const hue = HAND_HUE[hi%2];
     const wrist = pts[0];
+    const rootHue = 38;
+    const palmHue = 195;
     const palmKeys = [0,5,9,13,17].map(i => pts[i]);
     const palmCenter = {
       x: (pts[0].x + pts[5].x + pts[9].x + pts[13].x + pts[17].x) / 5,
@@ -702,19 +717,20 @@ function drawRigging(handStates) {
     };
 
     for (let i = 1; i < palmKeys.length; i++) {
-      drawRigBone(palmKeys[i - 1], palmKeys[i], hue + i * 6, 9, 0.75);
-      drawRigJoint(palmKeys[i].x, palmKeys[i].y, 4.8, hue + i * 8, 0.9);
+      drawRigBone(palmKeys[i - 1], palmKeys[i], palmHue + i * 4, 9, 0.75);
+      drawRigJoint(palmKeys[i].x, palmKeys[i].y, 4.8, palmHue + i * 6, 0.9);
     }
-    drawRigBone(wrist, palmCenter, hue + 6, 10, 0.9);
-    drawRigJoint(wrist.x, wrist.y, 7, hue, 1);
-    drawRigJoint(palmCenter.x, palmCenter.y, 6.2, hue + 10, 1);
-    drawRigAxis(wrist, pts[9], hue, 1.1);
-    drawRigLabel(wrist.x, wrist.y - 18, `MASTER_${hi + 1}`, hue, 0.95);
-    drawRigLabel(palmCenter.x, palmCenter.y + 18, `PALM_CTRL`, hue + 10, 0.9);
+    drawRigBone(wrist, palmCenter, rootHue, 10, 0.9);
+    drawRigJoint(wrist.x, wrist.y, 7, rootHue, 1);
+    drawRigJoint(palmCenter.x, palmCenter.y, 6.2, palmHue, 1);
+    drawRigAxis(wrist, pts[9], rootHue, 1.1);
+    drawRigLabel(wrist.x, wrist.y - 18, `MASTER_${hi + 1}`, rootHue, 0.95);
+    drawRigLabel(palmCenter.x, palmCenter.y + 18, `PALM_CTRL`, palmHue, 0.9);
+    drawRigParentLine(wrist, palmCenter, rootHue, 0.7);
 
     ctx.save();
     ctx.globalAlpha = 0.9;
-    ctx.strokeStyle = `hsla(${hue},100%,82%,0.85)`;
+    ctx.strokeStyle = `hsla(${rootHue},100%,82%,0.85)`;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([5, 4]);
     ctx.beginPath();
@@ -725,15 +741,20 @@ function drawRigging(handStates) {
     activeTipIndices.forEach((tipIdx, chainOrder) => {
       const chain = [0, ...FINGER_CHAINS[tipIdx]];
       const fingerName = ['THUMB', 'INDEX', 'MIDDLE', 'RING', 'PINKY'][TIPS.indexOf(tipIdx)];
+      const fingerHue = hue + chainOrder * 18;
       for (let i = 1; i < chain.length; i++) {
         const a = pts[chain[i - 1]], b = pts[chain[i]];
-        const boneHue = hue + chainOrder * 16 + i * 4;
+        const boneHue = fingerHue + i * 4;
         drawRigBone(a, b, boneHue, i === chain.length - 1 ? 6.5 : 8, 1);
         drawRigJoint(b.x, b.y, i === chain.length - 1 ? 5.4 : 4.4, boneHue, 1);
-        if (i < chain.length - 1) drawRigAxis(b, a, boneHue, 0.78);
+        drawRigParentLine(a, b, boneHue, 0.38);
+        if (i < chain.length - 1) {
+          drawRigAxis(b, a, boneHue, 0.78);
+          drawRigLabel(b.x, b.y - 14, `${fingerName}_FK${i}`, boneHue, 0.68);
+        }
       }
       const tip = pts[tipIdx];
-      drawRigLabel(tip.x, tip.y - 18, `${fingerName}_IK`, hue + chainOrder * 18, 0.86);
+      drawRigLabel(tip.x, tip.y - 18, `${fingerName}_IK`, fingerHue, 0.86);
     });
 
     activeFingers.forEach(({ p, fi }) => {
@@ -750,6 +771,7 @@ function drawRigging(handStates) {
       ctx.fill();
       ctx.stroke();
       ctx.restore();
+      drawRigParentLine(p, palmCenter, ctrlHue, 0.55);
       drawRigAxis(p, wrist, ctrlHue, 0.65);
     });
   });
