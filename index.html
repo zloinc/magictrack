@@ -244,48 +244,92 @@ function drawWeb(allPts) {
 
 // 🌀 WARP
 function drawWarpLine(x1, y1, x2, y2, hue) {
-  const thick = 38, t = Date.now() / 1000;
+  const d = Math.hypot(x2 - x1, y2 - y1);
+  if (d < 24 || d > 420) return;
+
+  const t = Date.now() / 1000;
+  const mix = clamp(1 - (d - 40) / 340, 0, 1);
+  const thick = 18 + mix * 26;
   const angle = Math.atan2(y2 - y1, x2 - x1);
   const perpX = -Math.sin(angle), perpY = Math.cos(angle);
-  ctx.save(); capsulePath(x1, y1, x2, y2, thick); ctx.clip();
-  ctx.filter = 'blur(10px)';
-  ctx.translate(W, 0); ctx.scale(-1, 1);
-  ctx.drawImage(video, 0, 0, W, H);
-  ctx.setTransform(1,0,0,1,0,0); ctx.filter = 'none';
-  const sg = ctx.createLinearGradient(x1, y1, x2, y2);
-  sg.addColorStop(0,   `hsla(${hue},100%,50%,0.18)`);
-  sg.addColorStop(0.5, `hsla(${hue+40},100%,60%,0.12)`);
-  sg.addColorStop(1,   `hsla(${hue+80},100%,50%,0.18)`);
-  ctx.fillStyle = sg; ctx.fill(); ctx.restore();
-  ctx.save(); capsulePath(x1, y1, x2, y2, thick);
-  ctx.strokeStyle = `hsla(${hue},100%,70%,0.55)`; ctx.lineWidth = 1.5;
-  ctx.shadowBlur = 12; ctx.shadowColor = `hsla(${hue},100%,65%,0.8)`; ctx.stroke(); ctx.restore();
-  for (let s = 0; s < 5; s++) {
-    const sHue = hue + s * 22, phase = s * 1.27;
-    ctx.save(); capsulePath(x1, y1, x2, y2, thick - 2); ctx.clip();
-    ctx.beginPath(); ctx.strokeStyle = `hsla(${sHue},100%,75%,${0.28 + s * 0.08})`;
-    ctx.lineWidth = 1 + s * 0.3; ctx.shadowBlur = 8; ctx.shadowColor = `hsla(${sHue},100%,70%,0.5)`;
-    for (let i = 0; i <= 70; i++) {
-      const p = i / 70, bx = x1 + (x2 - x1) * p, by = y1 + (y2 - y1) * p;
-      const disp = (thick*.55)*Math.sin(p*6+t*1.8+phase) + (thick*.25)*Math.sin(p*14+t*3.2+phase*2.1) + (thick*.12)*Math.sin(p*28+t*5.5+phase*3.7);
-      const fx = bx + perpX * disp, fy = by + perpY * disp;
-      i === 0 ? ctx.moveTo(fx, fy) : ctx.lineTo(fx, fy);
-    }
-    ctx.stroke(); ctx.restore();
+  const midX = (x1 + x2) * 0.5;
+  const midY = (y1 + y2) * 0.5;
+  const wobble = Math.sin(t * 3.3 + hue * 0.03 + d * 0.01) * thick * 0.45;
+  const sag = thick * (0.35 + mix * 0.8);
+  const cx = midX + perpX * wobble;
+  const cy = midY + perpY * wobble + sag;
+
+  const startHue = (hue - 35 + 360) % 360;
+  const midHue = (hue + 28) % 360;
+  const endHue = (hue + 95) % 360;
+  const g = ctx.createLinearGradient(x1, y1, x2, y2);
+  g.addColorStop(0, `hsla(${startHue},100%,72%,${0.26 + mix * 0.16})`);
+  g.addColorStop(0.5, `hsla(${midHue},100%,76%,${0.32 + mix * 0.2})`);
+  g.addColorStop(1, `hsla(${endHue},100%,72%,${0.26 + mix * 0.16})`);
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'screen';
+  ctx.beginPath();
+  ctx.moveTo(x1 + perpX * thick, y1 + perpY * thick);
+  ctx.quadraticCurveTo(cx + perpX * thick * 0.45, cy + perpY * thick * 0.45, x2 + perpX * thick, y2 + perpY * thick);
+  ctx.arc(x2, y2, thick, angle - Math.PI / 2, angle + Math.PI / 2);
+  ctx.quadraticCurveTo(cx - perpX * thick * 0.45, cy - perpY * thick * 0.45, x1 - perpX * thick, y1 - perpY * thick);
+  ctx.arc(x1, y1, thick, angle + Math.PI / 2, angle - Math.PI / 2);
+  ctx.closePath();
+  ctx.fillStyle = g;
+  ctx.shadowBlur = 26 + mix * 24;
+  ctx.shadowColor = `hsla(${midHue},100%,70%,0.65)`;
+  ctx.fill();
+
+  const core = ctx.createLinearGradient(x1, y1, x2, y2);
+  core.addColorStop(0, `hsla(${startHue},100%,92%,0.18)`);
+  core.addColorStop(0.5, `hsla(${midHue},100%,94%,${0.2 + mix * 0.18})`);
+  core.addColorStop(1, `hsla(${endHue},100%,92%,0.18)`);
+  ctx.beginPath();
+  ctx.moveTo(x1 + perpX * thick * 0.45, y1 + perpY * thick * 0.45);
+  ctx.quadraticCurveTo(cx + perpX * thick * 0.18, cy + perpY * thick * 0.18, x2 + perpX * thick * 0.45, y2 + perpY * thick * 0.45);
+  ctx.quadraticCurveTo(cx - perpX * thick * 0.18, cy - perpY * thick * 0.18, x1 - perpX * thick * 0.45, y1 - perpY * thick * 0.45);
+  ctx.closePath();
+  ctx.fillStyle = core;
+  ctx.fill();
+
+  ctx.strokeStyle = `hsla(${midHue},100%,88%,${0.2 + mix * 0.2})`;
+  ctx.lineWidth = 1.2 + mix * 1.8;
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = `hsla(${endHue},100%,82%,0.7)`;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.quadraticCurveTo(cx, cy, x2, y2);
+  ctx.stroke();
+
+  for (let s = 0; s < 3; s++) {
+    const strandHue = (startHue + s * 48) % 360;
+    const strandOffset = (s - 1) * thick * 0.22;
+    ctx.beginPath();
+    ctx.strokeStyle = `hsla(${strandHue},100%,80%,${0.16 + mix * 0.08})`;
+    ctx.lineWidth = 1 + s * 0.45;
+    ctx.moveTo(x1 + perpX * strandOffset, y1 + perpY * strandOffset);
+    ctx.quadraticCurveTo(cx + perpX * strandOffset * 0.65, cy + perpY * strandOffset * 0.65, x2 + perpX * strandOffset, y2 + perpY * strandOffset);
+    ctx.stroke();
   }
+  ctx.restore();
 }
 function drawWarp(allPts) {
   allPts.forEach((pts, hi) => {
     const hue = HAND_HUE[hi%2], tips = TIPS.map(i => pts[i]);
-    for (let a = 0; a < tips.length - 1; a++)
-      drawWarpLine(tips[a].x, tips[a].y, tips[a+1].x, tips[a+1].y, hue + a * 14);
+    for (let a = 0; a < tips.length; a++) for (let b = a + 1; b < tips.length; b++) {
+      const d = dist2d(tips[a], tips[b]);
+      if (d < 320) drawWarpLine(tips[a].x, tips[a].y, tips[b].x, tips[b].y, hue + a * 32 + b * 18);
+    }
     tips.forEach((p, fi) => drawDot(p.x, p.y, hue + fi * 14));
   });
   if (allPts.length >= 2) {
-    TIPS.forEach((idx, fi) => {
-      const p0 = allPts[0][idx], p1 = allPts[1][idx];
-      if (dist2d(p0, p1) < 520) drawWarpLine(p0.x, p0.y, p1.x, p1.y, 240 + fi * 22);
-    });
+    const tips0 = TIPS.map(i => allPts[0][i]);
+    const tips1 = TIPS.map(i => allPts[1][i]);
+    for (let a = 0; a < tips0.length; a++) for (let b = 0; b < tips1.length; b++) {
+      const d = dist2d(tips0[a], tips1[b]);
+      if (d < 420) drawWarpLine(tips0[a].x, tips0[a].y, tips1[b].x, tips1[b].y, 250 + a * 18 + b * 26);
+    }
   }
 }
 
