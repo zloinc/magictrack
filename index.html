@@ -44,8 +44,10 @@
   <div class="btn" data-fx="lightning">⚡ Lightning</div>
   <div class="btn" data-fx="particles">✨ Particles</div>
   <div class="btn" data-fx="trails">🔥 Trails</div>
+  <div class="btn" data-fx="prism">🌈 Prism</div>
   <div class="btn" data-fx="rigging">🦴 Rigging</div>
   <div class="btn" data-fx="fireworks">🎆 Fireworks</div>
+  <div class="btn" data-fx="nova">💥 Nova</div>
   <div class="btn" data-fx="orbs">🔮 Orbs</div>
 </div>
 <div id="status">Loading model…</div>
@@ -73,6 +75,7 @@ document.querySelectorAll('.btn').forEach(btn => {
     btn.classList.add('active');
     activeFx = btn.dataset.fx;
     particles.length = 0;
+    novaBursts.length = 0;
     for (const k in trails) delete trails[k];
     for (const k in orbs)   delete orbs[k];
   });
@@ -205,6 +208,56 @@ function pushTrail(key, x, y, hue) {
   if (!trails[key]) trails[key] = [];
   trails[key].push({ x, y, hue });
   if (trails[key].length > 50) trails[key].shift();
+}
+
+const novaBursts = [];
+const novaCooldown = {};
+
+class NovaBurst {
+  constructor(x, y, hue, power = 1) {
+    this.x = x; this.y = y; this.hue = hue;
+    this.life = 1;
+    this.power = power;
+    this.r = 24;
+    this.maxR = 120 + power * 120;
+    this.spokes = Array.from({ length: 10 }, (_, i) => ({
+      angle: (i / 10) * Math.PI * 2 + rand(-0.2, 0.2),
+      len: rand(18, 48) * (0.8 + power * 0.45),
+      width: rand(1.5, 4),
+      hue: hue + rand(-35, 35),
+    }));
+  }
+  update() {
+    this.r = lerp(this.r, this.maxR, 0.12);
+    this.life -= 0.035;
+  }
+  draw() {
+    if (this.life <= 0) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    ctx.globalAlpha = this.life;
+    const halo = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.r * 1.8);
+    halo.addColorStop(0, `hsla(${this.hue},100%,88%,0.45)`);
+    halo.addColorStop(0.45, `hsla(${this.hue + 35},100%,68%,0.18)`);
+    halo.addColorStop(1, `hsla(${this.hue + 85},100%,55%,0)`);
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r * 1.8, 0, Math.PI * 2);
+    ctx.fill();
+    this.spokes.forEach(spoke => {
+      const ex = this.x + Math.cos(spoke.angle) * (this.r + spoke.len);
+      const ey = this.y + Math.sin(spoke.angle) * (this.r + spoke.len);
+      ctx.strokeStyle = `hsla(${spoke.hue},100%,78%,${this.life * 0.7})`;
+      ctx.lineWidth = spoke.width * this.life;
+      ctx.shadowBlur = 14;
+      ctx.shadowColor = `hsla(${spoke.hue},100%,72%,0.8)`;
+      ctx.beginPath();
+      ctx.moveTo(this.x, this.y);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
 }
 
 // ── Orbs ──────────────────────────────────────────────────────────────────────
@@ -432,6 +485,49 @@ function drawTrailsFx(handStates) {
   for (const key of Object.keys(trails)) if (!activeKeys.has(key)) delete trails[key];
 }
 
+// 🌈 PRISM
+function drawPrismFx(handStates) {
+  const activeKeys = new Set();
+  handStates.forEach(state => {
+    const { hi, activeFingers } = state;
+    activeFingers.forEach(({ p, fi }) => {
+      const key = `${hi}_${fi}`;
+      activeKeys.add(key);
+      pushTrail(key, p.x, p.y, 30 + fi * 36 + hi * 20);
+      drawDot(p.x, p.y, 30 + fi * 36 + hi * 20, 11);
+    });
+  });
+  for (const key of Object.keys(trails)) if (!activeKeys.has(key)) delete trails[key];
+}
+
+// 💥 NOVA
+function drawNovaFx(handStates) {
+  handStates.forEach(state => {
+    const { hi, activeFingers, fingerCount } = state;
+    activeFingers.forEach(({ p, fi }) => drawDot(p.x, p.y, 25 + hi * 120 + fi * 24, 12));
+    const cooldownKey = `hand_${hi}`;
+    novaCooldown[cooldownKey] = Math.max(0, (novaCooldown[cooldownKey] || 0) - 1);
+    if (fingerCount !== 2) return;
+
+    const [a, b] = activeFingers;
+    const midX = (a.p.x + b.p.x) * 0.5;
+    const midY = (a.p.y + b.p.y) * 0.5;
+    const avgSpeed = (tipVel(hi, a.fi).speed + tipVel(hi, b.fi).speed) * 0.5;
+    const spread = dist2d(a.p, b.p);
+    if (spread < 30 || novaCooldown[cooldownKey] > 0) return;
+
+    if (avgSpeed > 5 || Math.random() < 0.08) {
+      const hue = 35 + hi * 120 + ((a.fi + b.fi) * 24);
+      novaBursts.push(new NovaBurst(midX, midY, hue, clamp(avgSpeed / 12, 0.5, 1.6)));
+      for (let i = 0; i < 18 && particles.length < MAX_PART; i++) {
+        const ang = rand(0, Math.PI * 2), spd = rand(2, 8);
+        particles.push(new Particle(midX, midY, hue + rand(-30, 30), Math.cos(ang) * spd, Math.sin(ang) * spd));
+      }
+      novaCooldown[cooldownKey] = 8;
+    }
+  });
+}
+
 // 🦴 RIGGING
 function drawRigging(handStates) {
   handStates.forEach(state => {
@@ -554,6 +650,10 @@ function render() {
     particles[i].update(); particles[i].draw();
     if (particles[i].life <= 0) particles.splice(i,1);
   }
+  for (let i = novaBursts.length - 1; i >= 0; i--) {
+    novaBursts[i].update(); novaBursts[i].draw();
+    if (novaBursts[i].life <= 0) novaBursts.splice(i,1);
+  }
   if (activeFx === 'trails') {
     for (const key of Object.keys(trails)) {
       const pts = trails[key];
@@ -564,12 +664,38 @@ function render() {
         ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke(); ctx.restore();
       }
     }
+  } else if (activeFx === 'prism') {
+    for (const key of Object.keys(trails)) {
+      const pts = trails[key];
+      for (let band = 0; band < 5; band++) {
+        for (let i = 1; i < pts.length; i++) {
+          const a = pts[i-1], b = pts[i], t = i / pts.length;
+          const hue = (b.hue + band * 26) % 360;
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const ox = -dy / len * (band - 2) * 3.5;
+          const oy = dx / len * (band - 2) * 3.5;
+          ctx.save(); ctx.globalCompositeOperation = 'screen';
+          ctx.globalAlpha = t * (0.16 + band * 0.05);
+          ctx.strokeStyle = `hsla(${hue},100%,70%,1)`;
+          ctx.lineWidth = 1.8 + t * (band === 2 ? 9 : 5);
+          ctx.shadowBlur = 14;
+          ctx.shadowColor = `hsla(${hue},100%,65%,0.85)`;
+          ctx.beginPath();
+          ctx.moveTo(a.x + ox, a.y + oy);
+          ctx.lineTo(b.x + ox, b.y + oy);
+          ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
   } else { for (const k in trails) delete trails[k]; }
 
   // Need multiHandLandmarks from old API
   const rawHands = lastResults && lastResults.multiHandLandmarks;
   if (!rawHands || rawHands.length === 0) {
     if (activeFx === 'trails') for (const k in trails) delete trails[k];
+    if (activeFx === 'prism') for (const k in trails) delete trails[k];
     if (activeFx === 'orbs') for (const k in orbs) delete orbs[k];
     return;
   }
@@ -579,6 +705,7 @@ function render() {
   updateVelocity(allPts);
   if (handStates.every(state => state.fingerCount === 0)) {
     if (activeFx === 'trails') for (const k in trails) delete trails[k];
+    if (activeFx === 'prism') for (const k in trails) delete trails[k];
     if (activeFx === 'orbs') for (const k in orbs) delete orbs[k];
     return;
   }
@@ -599,8 +726,10 @@ function render() {
   if (activeFx==='lightning') drawLightningFx(handStates);
   if (activeFx==='particles') drawParticlesFx(handStates);
   if (activeFx==='trails')    drawTrailsFx(handStates);
+  if (activeFx==='prism')     drawPrismFx(handStates);
   if (activeFx==='rigging')   drawRigging(handStates);
   if (activeFx==='fireworks') drawFireworksFx(handStates);
+  if (activeFx==='nova')      drawNovaFx(handStates);
   if (activeFx==='orbs')      drawOrbsFx(handStates);
 }
 
