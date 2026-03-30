@@ -317,10 +317,35 @@ function drawRigAxis(a, b, hue, scale = 1) {
   ctx.lineTo(axisLen, 0);
   ctx.stroke();
   ctx.beginPath();
-  ctx.strokeStyle = `hsla(${hue},100%,78%,0.9)`;
+  ctx.strokeStyle = 'rgba(90,255,120,0.9)';
   ctx.moveTo(0, 0);
   ctx.lineTo(0, axisLen * 0.75);
   ctx.stroke();
+  ctx.beginPath();
+  ctx.strokeStyle = 'rgba(90,160,255,0.9)';
+  ctx.moveTo(0, 0);
+  ctx.lineTo(-axisLen * 0.55, axisLen * 0.42);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawRigLabel(x, y, text, hue, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = '10px Menlo, Monaco, monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const padX = 6, padY = 3;
+  const w = ctx.measureText(text).width + padX * 2;
+  ctx.fillStyle = 'rgba(10,12,18,0.88)';
+  ctx.strokeStyle = `hsla(${hue},100%,76%,0.8)`;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(x - w / 2, y - 8, w, 16, 4);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = `hsla(${hue},100%,88%,0.95)`;
+  ctx.fillText(text, x, y);
   ctx.restore();
 }
 
@@ -671,16 +696,35 @@ function drawRigging(handStates) {
     const hue = HAND_HUE[hi%2];
     const wrist = pts[0];
     const palmKeys = [0,5,9,13,17].map(i => pts[i]);
+    const palmCenter = {
+      x: (pts[0].x + pts[5].x + pts[9].x + pts[13].x + pts[17].x) / 5,
+      y: (pts[0].y + pts[5].y + pts[9].y + pts[13].y + pts[17].y) / 5,
+    };
 
     for (let i = 1; i < palmKeys.length; i++) {
       drawRigBone(palmKeys[i - 1], palmKeys[i], hue + i * 6, 9, 0.75);
       drawRigJoint(palmKeys[i].x, palmKeys[i].y, 4.8, hue + i * 8, 0.9);
     }
+    drawRigBone(wrist, palmCenter, hue + 6, 10, 0.9);
     drawRigJoint(wrist.x, wrist.y, 7, hue, 1);
+    drawRigJoint(palmCenter.x, palmCenter.y, 6.2, hue + 10, 1);
     drawRigAxis(wrist, pts[9], hue, 1.1);
+    drawRigLabel(wrist.x, wrist.y - 18, `MASTER_${hi + 1}`, hue, 0.95);
+    drawRigLabel(palmCenter.x, palmCenter.y + 18, `PALM_CTRL`, hue + 10, 0.9);
+
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.strokeStyle = `hsla(${hue},100%,82%,0.85)`;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.roundRect(wrist.x - 18, wrist.y - 18, 36, 36, 6);
+    ctx.stroke();
+    ctx.restore();
 
     activeTipIndices.forEach((tipIdx, chainOrder) => {
       const chain = [0, ...FINGER_CHAINS[tipIdx]];
+      const fingerName = ['THUMB', 'INDEX', 'MIDDLE', 'RING', 'PINKY'][TIPS.indexOf(tipIdx)];
       for (let i = 1; i < chain.length; i++) {
         const a = pts[chain[i - 1]], b = pts[chain[i]];
         const boneHue = hue + chainOrder * 16 + i * 4;
@@ -688,6 +732,8 @@ function drawRigging(handStates) {
         drawRigJoint(b.x, b.y, i === chain.length - 1 ? 5.4 : 4.4, boneHue, 1);
         if (i < chain.length - 1) drawRigAxis(b, a, boneHue, 0.78);
       }
+      const tip = pts[tipIdx];
+      drawRigLabel(tip.x, tip.y - 18, `${fingerName}_IK`, hue + chainOrder * 18, 0.86);
     });
 
     activeFingers.forEach(({ p, fi }) => {
@@ -704,6 +750,7 @@ function drawRigging(handStates) {
       ctx.fill();
       ctx.stroke();
       ctx.restore();
+      drawRigAxis(p, wrist, ctrlHue, 0.65);
     });
   });
   if (handStates.length >= 2) {
