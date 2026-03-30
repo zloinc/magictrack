@@ -17,7 +17,7 @@ Open `index.html` via any local HTTP server (e.g. `python3 -m http.server 8080`)
 | ⚡ **Lightning** | Fractal electric bolts between fingers — within hand and across both hands |
 | ✨ **Particles** | Sparks that react to hand speed, inherit velocity, and scatter when your hand pushes through them |
 | 🛡 **Aura** | Open-palm energy shield with concentric halos and finger beams |
-| 🦴 **Rigging** | Every hand landmark connected to every other — 210 lines per hand |
+| 🦴 **Rigging** | 3D-rig style hand skeleton with wrist, finger bones, control boxes, and axis gizmos |
 | 🎆 **Fireworks** | Slow = light trail; sudden fast flick = particle explosion burst |
 | 💥 **Nova** | Two-finger gesture spawns bright radial bursts and particle detonations from the gesture center |
 | 🌀 **Portal** | Close palms form a glowing portal with arcs linking active fingers across hands |
