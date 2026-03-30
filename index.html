@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>✨ Magic Hands</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+    #ui {
+      position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+      z-index: 10; display: flex; gap: 7px; flex-wrap: wrap; justify-content: center;
+    }
+    .btn {
+      padding: 7px 17px; border: 1px solid rgba(255,255,255,0.18); border-radius: 30px;
+      background: rgba(255,255,255,0.05); color: #999; cursor: pointer;
+      font-size: 12px; backdrop-filter: blur(8px); transition: all .2s; user-select: none;
+    }
+    .btn:hover { background: rgba(255,255,255,0.13); color: #fff; }
+    .btn.active {
+      background: rgba(120,60,255,0.48); border-color: #a06aff;
+      color: #fff; box-shadow: 0 0 16px rgba(150,80,255,0.55);
+    }
+    #status {
+      position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.35); font-size: 12px; letter-spacing: 1px;
+      z-index: 10; pointer-events: none;
+    }
+    video { display: none; }
+    canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
+    #video-canvas { z-index: 0; }
+    #fx-canvas    { z-index: 1; }
+  </style>
+</head>
+<body>
+
+<canvas id="video-canvas"></canvas>
+<canvas id="fx-canvas"></canvas>
+<video id="video" playsinline></video>
+
+<div id="ui">
+  <div class="btn active" data-fx="web">🕸 Web</div>
+  <div class="btn" data-fx="warp">🌀 Warp</div>
+  <div class="btn" data-fx="lightning">⚡ Lightning</div>
+  <div class="btn" data-fx="particles">✨ Particles</div>
+  <div class="btn" data-fx="trails">🔥 Trails</div>
+  <div class="btn" data-fx="rigging">🦴 Rigging</div>
+  <div class="btn" data-fx="fireworks">🎆 Fireworks</div>
+  <div class="btn" data-fx="orbs">🔮 Orbs</div>
+  <div class="btn" data-fx="ripple">🌊 Ripple</div>
+</div>
+
+<div id="status">Loading model…</div>
+
+<script type="module">
+import { HandLandmarker, FilesetResolver }
+  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+
+// ── Canvases ──────────────────────────────────────────────────────────────────
+const vidCanvas = document.getElementById('video-canvas');
+const vidCtx    = vidCanvas.getContext('2d');
+const fxCanvas  = document.getElementById('fx-canvas');
+const ctx       = fxCanvas.getContext('2d');
+const video     = document.getElementById('video');
+const statusEl  = document.getElementById('status');
+let W = 0, H = 0;
+function resize() {
+  W = vidCanvas.width = fxCanvas.width  = window.innerWidth;
+  H = vidCanvas.height = fxCanvas.height = window.innerHeight;
+  ripples.length = 0;
+}
+window.addEventListener('resize', resize); resize();
+
+// ── Effect radio ─────────────────────────────────────────────────────────────
+let activeFx = 'web';
+document.querySelectorAll('.btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeFx = btn.dataset.fx;
+    particles.length = 0; ripples.length = 0;
+    for (const k in trails) delete trails[k];
+    for (const k in orbs)   delete orbs[k];
+  });
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const rand   = (a, b) => Math.random() * (b - a) + a;
+const dist2d = (a, b)  => Math.hypot(a.x - b.x, a.y - b.y);
+const lm2s   = lm => ({ x: (1 - lm.x) * W, y: lm.y * H });
+const lerp   = (a, b, t) => a + (b - a) * t;
+const clamp  = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+const TIPS = [4, 8, 12, 16, 20];
+const HAND_HUE = [200, 300];
+const CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],[0,17]
+];
+
+// ── Velocity tracking ────────────────────────────────────────────────────────
+const prevLm   = {};   // key → {x,y}
+const velLm    = {};   // key → {vx,vy,speed}
+let   handPosFlat = []; // [{x,y,vx,vy,speed}] – all 21 pts * numHands, for particle push
+
+function updateVelocity(allPts) {
+  handPosFlat = [];
+  allPts.forEach((pts, hi) => {
+    pts.forEach((p, li) => {
+      const key = `${hi}_${li}`;
+      if (prevLm[key]) {
+        const vx = p.x - prevLm[key].x;
+        const vy = p.y - prevLm[key].y;
+        velLm[key] = { vx, vy, speed: Math.hypot(vx, vy) };
+      } else {
+        velLm[key] = { vx: 0, vy: 0, speed: 0 };
+      }
+      prevLm[key] = { x: p.x, y: p.y };
+      handPosFlat.push({ x: p.x, y: p.y, ...velLm[key] });
+    });
+  });
+}
+
+function tipVel(hi, fi) {
+  return velLm[`${hi}_${TIPS[fi]}`] || { vx: 0, vy: 0, speed: 0 };
+}
+
+// ── Particles (persistent, interactive) ──────────────────────────────────────
+const particles = [];
+const MAX_PART  = 1200;
+
+class Particle {
+  constructor(x, y, hue, vx = 0, vy = 0) {
+    this.x = x; this.y = y;
+    this.vx = vx + rand(-2, 2);
+    this.vy = vy + rand(-3, 1);
+    this.life  = 1;
+    this.decay = rand(0.008, 0.022);          // longer life
+    this.r     = rand(3, 18);                 // big size range
+    this.hue   = hue + rand(-30, 30);
+    this.grav  = rand(0.03, 0.12);
+  }
+  update() {
+    // gravity
+    this.vy += this.grav;
+    // drag
+    this.vx *= 0.97; this.vy *= 0.97;
+    this.x  += this.vx; this.y  += this.vy;
+    this.life -= this.decay;
+
+    // hand push/scatter
+    for (const h of handPosFlat) {
+      const dx = this.x - h.x, dy = this.y - h.y;
+      const d  = Math.hypot(dx, dy);
+      if (d < 90 && d > 0.5) {
+        const force = ((90 - d) / 90) * 1.4;
+        this.vx += (dx / d) * force + h.vx * 0.25;
+        this.vy += (dy / d) * force + h.vy * 0.25;
+      }
+    }
+  }
+  draw() {
+    if (this.life <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = clamp(this.life, 0, 1);
+    const r = this.r * (0.4 + 0.6 * this.life);
+    const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, r * 2);
+    g.addColorStop(0,   `hsla(${this.hue},100%,92%,1)`);
+    g.addColorStop(0.5, `hsla(${this.hue},100%,70%,0.6)`);
+    g.addColorStop(1,   `hsla(${this.hue},100%,50%,0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(this.x, this.y, r * 2, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+function spawnAt(x, y, hue, n = 4, vx = 0, vy = 0) {
+  for (let i = 0; i < n && particles.length < MAX_PART; i++)
+    particles.push(new Particle(x, y, hue, vx * 0.4, vy * 0.4));
+}
+
+// ── Trails ────────────────────────────────────────────────────────────────────
+const trails = {};
+function pushTrail(key, x, y, hue) {
+  if (!trails[key]) trails[key] = [];
+  trails[key].push({ x, y, hue });
+  if (trails[key].length > 50) trails[key].shift();
+}
+
+// ── Ripples ───────────────────────────────────────────────────────────────────
+const ripples = [];
+class Ripple {
+  constructor(x, y, hue) { this.x = x; this.y = y; this.hue = hue; this.r = 0; this.life = 1; this.maxR = rand(120, 260); }
+  update() { this.r = lerp(this.r, this.maxR, 0.06); this.life -= 0.014; }
+  draw() {
+    if (this.life <= 0) return;
+    const rings = 3;
+    for (let i = 0; i < rings; i++) {
+      const phase = (i / rings) * this.maxR * 0.4;
+      const rr = Math.max(0, this.r - phase);
+      const a  = (this.life * (1 - i / rings)) * 0.7;
+      ctx.save();
+      ctx.globalAlpha  = a;
+      ctx.strokeStyle  = `hsla(${this.hue + i * 20},100%,70%,1)`;
+      ctx.lineWidth    = 2.5 - i * 0.6;
+      ctx.shadowBlur   = 12; ctx.shadowColor = `hsla(${this.hue},100%,65%,0.7)`;
+      ctx.beginPath(); ctx.arc(this.x, this.y, rr, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+  }
+}
+
+// ── Orbs ─────────────────────────────────────────────────────────────────────
+const orbs = {};   // key → {x, y, tx, ty, hue, angle}
+function getOrb(key, tx, ty, hue) {
+  if (!orbs[key]) orbs[key] = { x: tx, y: ty, tx, ty, hue, angle: 0 };
+  orbs[key].tx = tx; orbs[key].ty = ty; orbs[key].hue = hue;
+  return orbs[key];
+}
+
+// ── Glow dot ─────────────────────────────────────────────────────────────────
+function drawDot(x, y, hue, r = 13) {
+  const pulse = 0.7 + 0.3 * Math.sin(Date.now() / 180);
+  ctx.save();
+  ctx.shadowBlur = 22; ctx.shadowColor = `hsla(${hue},100%,70%,1)`;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r * pulse);
+  g.addColorStop(0, `hsla(${hue},100%,96%,1)`);
+  g.addColorStop(1, `hsla(${hue},100%,60%,0)`);
+  ctx.fillStyle = g; ctx.beginPath();
+  ctx.arc(x, y, r * pulse, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+}
+
+// ── Capsule clip helper ───────────────────────────────────────────────────────
+function capsulePath(x1, y1, x2, y2, thick) {
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const px = -Math.sin(angle) * thick, py = Math.cos(angle) * thick;
+  ctx.beginPath();
+  ctx.moveTo(x1 + px, y1 + py); ctx.lineTo(x2 + px, y2 + py);
+  ctx.arc(x2, y2, thick, angle - Math.PI / 2, angle + Math.PI / 2);
+  ctx.lineTo(x1 - px, y1 - py);
+  ctx.arc(x1, y1, thick, angle + Math.PI / 2, angle - Math.PI / 2);
+  ctx.closePath();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// EFFECT RENDERERS
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── 🕸 WEB ────────────────────────────────────────────────────────────────────
+function drawWeb(allPts) {
+  allPts.forEach((pts, hi) => {
+    const hue  = HAND_HUE[hi % 2];
+    const tips = TIPS.map(i => pts[i]);
+    CONNECTIONS.forEach(([a, b]) => {
+      ctx.save();
+      ctx.strokeStyle = `hsla(${hue},80%,60%,0.45)`;
+      ctx.lineWidth = 1.5; ctx.shadowBlur = 5; ctx.shadowColor = `hsla(${hue},100%,60%,0.4)`;
+      ctx.beginPath(); ctx.moveTo(pts[a].x, pts[a].y); ctx.lineTo(pts[b].x, pts[b].y); ctx.stroke(); ctx.restore();
+    });
+    for (let a = 0; a < tips.length; a++) for (let b = a + 1; b < tips.length; b++) {
+      const d = dist2d(tips[a], tips[b]);
+      const alpha = Math.max(0, 1 - d / 340);
+      if (alpha < 0.02) continue;
+      const grad = ctx.createLinearGradient(tips[a].x, tips[a].y, tips[b].x, tips[b].y);
+      grad.addColorStop(0, `hsla(${hue + a * 12},100%,70%,1)`);
+      grad.addColorStop(1, `hsla(${hue + b * 12},100%,70%,1)`);
+      ctx.save(); ctx.globalAlpha = alpha * 0.85;
+      ctx.strokeStyle = grad; ctx.lineWidth = 3 * alpha;
+      ctx.shadowBlur = 14; ctx.shadowColor = `hsla(${hue},100%,65%,0.7)`;
+      ctx.beginPath(); ctx.moveTo(tips[a].x, tips[a].y); ctx.lineTo(tips[b].x, tips[b].y); ctx.stroke(); ctx.restore();
+    }
+    tips.forEach((p, fi) => drawDot(p.x, p.y, hue + fi * 14));
+  });
+}
+
+// ── 🌀 WARP ───────────────────────────────────────────────────────────────────
+function drawWarpLine(x1, y1, x2, y2, hue) {
+  const thick = 38, t = Date.now() / 1000;
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const perpX = -Math.sin(angle), perpY = Math.cos(angle);
+
+  ctx.save(); capsulePath(x1, y1, x2, y2, thick); ctx.clip();
+  ctx.filter = 'blur(10px)';
+  ctx.translate(W, 0); ctx.scale(-1, 1);
+  ctx.drawImage(video, 0, 0, W, H);
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.filter = 'none';
+  const sg = ctx.createLinearGradient(x1, y1, x2, y2);
+  sg.addColorStop(0,   `hsla(${hue},100%,50%,0.18)`);
+  sg.addColorStop(0.5, `hsla(${hue+40},100%,60%,0.12)`);
+  sg.addColorStop(1,   `hsla(${hue+80},100%,50%,0.18)`);
+  ctx.fillStyle = sg; ctx.fill(); ctx.restore();
+
+  ctx.save(); capsulePath(x1, y1, x2, y2, thick);
+  ctx.strokeStyle = `hsla(${hue},100%,70%,0.55)`; ctx.lineWidth = 1.5;
+  ctx.shadowBlur = 12; ctx.shadowColor = `hsla(${hue},100%,65%,0.8)`; ctx.stroke(); ctx.restore();
+
+  for (let s = 0; s < 5; s++) {
+    const sHue = hue + s * 22, phase = s * 1.27;
+    ctx.save(); capsulePath(x1, y1, x2, y2, thick - 2); ctx.clip();
+    ctx.beginPath();
+    ctx.strokeStyle = `hsla(${sHue},100%,75%,${0.28 + s * 0.08})`;
+    ctx.lineWidth   = 1 + s * 0.3; ctx.shadowBlur = 8; ctx.shadowColor = `hsla(${sHue},100%,70%,0.5)`;
+    for (let i = 0; i <= 70; i++) {
+      const p = i / 70;
+      const bx = x1 + (x2 - x1) * p, by = y1 + (y2 - y1) * p;
+      const disp =
+        (thick * 0.55) * Math.sin(p * 6  + t * 1.8 + phase) +
+        (thick * 0.25) * Math.sin(p * 14 + t * 3.2 + phase * 2.1) +
+        (thick * 0.12) * Math.sin(p * 28 + t * 5.5 + phase * 3.7);
+      const fx = bx + perpX * disp, fy = by + perpY * disp;
+      i === 0 ? ctx.moveTo(fx, fy) : ctx.lineTo(fx, fy);
+    }
+    ctx.stroke(); ctx.restore();
+  }
+}
+
+function drawWarp(allPts) {
+  allPts.forEach((pts, hi) => {
+    const hue  = HAND_HUE[hi % 2];
+    const tips = TIPS.map(i => pts[i]);
+    for (let a = 0; a < tips.length - 1; a++)
+      drawWarpLine(tips[a].x, tips[a].y, tips[a+1].x, tips[a+1].y, hue + a * 14);
+    tips.forEach((p, fi) => drawDot(p.x, p.y, hue + fi * 14));
+  });
+  if (allPts.length >= 2) {
+    TIPS.forEach((idx, fi) => {
+      const p0 = allPts[0][idx], p1 = allPts[1][idx];
+      if (dist2d(p0, p1) < 520) drawWarpLine(p0.x, p0.y, p1.x, p1.y, 240 + fi * 22);
+    });
+  }
+}
+
+// ── ⚡ LIGHTNING (cached bolts, longer persistence) ───────────────────────────
+const boltCache = {};   // key → {segs, ttl}
+const BOLT_TTL = 6;     // frames to keep same bolt shape
+
+function getBolt(key, x1, y1, x2, y2, spread) {
+  if (!boltCache[key] || --boltCache[key].ttl <= 0) {
+    const segs = buildBolt(x1, y1, x2, y2, 4, spread);
+    boltCache[key] = { segs, ttl: BOLT_TTL };
+  }
+  return boltCache[key].segs;
+}
+
+function buildBolt(x1, y1, x2, y2, depth, spread) {
+  if (depth === 0) return [[x1, y1, x2, y2]];
+  const mx = (x1 + x2) / 2 + rand(-spread, spread);
+  const my = (y1 + y2) / 2 + rand(-spread, spread);
+  return [...buildBolt(x1, y1, mx, my, depth - 1, spread * 0.6),
+          ...buildBolt(mx, my, x2, y2, depth - 1, spread * 0.6)];
+}
+
+function drawLightningLine(x1, y1, x2, y2, hue, key) {
+  const d    = dist2d({x:x1,y:y1},{x:x2,y:y2});
+  const segs = getBolt(key, x1, y1, x2, y2, d * 0.14);
+  [5, 1.5].forEach((lw, pass) => {
+    ctx.save();
+    ctx.globalAlpha = pass === 0 ? 0.25 : 1;
+    ctx.strokeStyle = `hsla(${hue},100%,${pass === 0 ? 60 : 94}%,1)`;
+    ctx.lineWidth   = lw;
+    ctx.shadowBlur  = pass === 1 ? 24 : 0;
+    ctx.shadowColor = `hsla(${hue},100%,70%,1)`;
+    ctx.beginPath();
+    for (const [ax, ay, bx, by] of segs) { ctx.moveTo(ax, ay); ctx.lineTo(bx, by); }
+    ctx.stroke(); ctx.restore();
+  });
+}
+
+function drawLightningFx(allPts) {
+  allPts.forEach((pts, hi) => {
+    const hue  = HAND_HUE[hi % 2];
+    const tips = TIPS.map(i => pts[i]);
+    // within hand — every adjacent tip pair (not just neighbours)
+    for (let a = 0; a < tips.length; a++) {
+      for (let b = a + 1; b < tips.length; b++) {
+        const d = dist2d(tips[a], tips[b]);
+        if (d < 280) drawLightningLine(tips[a].x, tips[a].y, tips[b].x, tips[b].y, hue + (a + b) * 10, `h${hi}_${a}_${b}`);
+      }
+    }
+    tips.forEach((p, fi) => drawDot(p.x, p.y, hue + fi * 14));
+  });
+  // between hands
+  if (allPts.length >= 2) {
+    TIPS.forEach((idx, fi) => {
+      const p0 = allPts[0][idx], p1 = allPts[1][idx];
+      if (dist2d(p0, p1) < 560)
+        drawLightningLine(p0.x, p0.y, p1.x, p1.y, 220 + fi * 22, `cross_${fi}`);
+    });
+  }
+  // clear stale bolt keys
+  for (const k in boltCache) if (boltCache[k].ttl <= 0) delete boltCache[k];
+}
+
+// ── ✨ PARTICLES (velocity-reactive, hand-interactive) ───────────────────────
+function drawParticlesFx(allPts) {
+  allPts.forEach((pts, hi) => {
+    const hue = HAND_HUE[hi % 2];
+    TIPS.forEach((idx, fi) => {
+      const p = pts[idx];
+      const v = tipVel(hi, fi);
+      drawDot(p.x, p.y, hue + fi * 18);
+      // more particles the faster the movement
+      const rate = 0.15 + clamp(v.speed / 8, 0, 0.85);
+      if (Math.random() < rate)
+        spawnAt(p.x, p.y, hue + fi * 18, Math.ceil(1 + v.speed * 0.4), v.vx, v.vy);
+    });
+  });
+}
+
+// ── 🔥 TRAILS ────────────────────────────────────────────────────────────────
+function drawTrailsFx(allPts) {
+  allPts.forEach((pts, hi) => {
+    const hue = HAND_HUE[hi % 2];
+    TIPS.forEach((idx, fi) => {
+      const p = pts[idx];
+      drawDot(p.x, p.y, hue + fi * 18);
+      pushTrail(`${hi}_${fi}`, p.x, p.y, hue + fi * 18);
+    });
+  });
+}
+
+// ── 🦴 RIGGING ────────────────────────────────────────────────────────────────
+function drawRigging(allPts) {
+  allPts.forEach((pts, hi) => {
+    const hue = HAND_HUE[hi % 2], n = pts.length;
+    for (let a = 0; a < n; a++) for (let b = a + 1; b < n; b++) {
+      const d = dist2d(pts[a], pts[b]);
+      const alpha = Math.max(0, 1 - d / 420);
+      if (alpha < 0.04) continue;
+      const grad = ctx.createLinearGradient(pts[a].x, pts[a].y, pts[b].x, pts[b].y);
+      grad.addColorStop(0, `hsla(${hue + a * 5},100%,72%,1)`);
+      grad.addColorStop(1, `hsla(${hue + b * 5},100%,72%,1)`);
+      ctx.save(); ctx.globalAlpha = alpha * 0.6; ctx.strokeStyle = grad;
+      ctx.lineWidth = 1.2 + alpha * 2; ctx.shadowBlur = 8; ctx.shadowColor = `hsla(${hue},100%,65%,0.5)`;
+      ctx.beginPath(); ctx.moveTo(pts[a].x, pts[a].y); ctx.lineTo(pts[b].x, pts[b].y); ctx.stroke(); ctx.restore();
+    }
+    pts.forEach((p, i) => {
+      const dh = hue + i * 6;
+      ctx.save(); ctx.shadowBlur = 12; ctx.shadowColor = `hsla(${dh},100%,70%,0.9)`;
+      ctx.fillStyle = `hsla(${dh},100%,90%,0.9)`;
+      ctx.beginPath(); ctx.arc(p.x, p.y, i === 0 ? 6 : TIPS.includes(i) ? 5 : 3.5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    });
+  });
+  if (allPts.length >= 2) {
+    const pts0 = allPts[0], pts1 = allPts[1];
+    for (let a = 0; a < pts0.length; a++) for (let b = 0; b < pts1.length; b++) {
+      const d = dist2d(pts0[a], pts1[b]);
+      const alpha = Math.max(0, 1 - d / 480);
+      if (alpha < 0.04) continue;
+      ctx.save(); ctx.globalAlpha = alpha * 0.3;
+      ctx.strokeStyle = `hsla(${260 + (a + b) * 4},100%,75%,1)`;
+      ctx.lineWidth = 0.8 + alpha * 1.5; ctx.shadowBlur = 5; ctx.shadowColor = `hsla(260,100%,65%,0.4)`;
+      ctx.beginPath(); ctx.moveTo(pts0[a].x, pts0[a].y); ctx.lineTo(pts1[b].x, pts1[b].y); ctx.stroke(); ctx.restore();
+    }
+  }
+}
+
+// ── 🎆 FIREWORKS ─────────────────────────────────────────────────────────────
+let fwPrevSpeed = {};
+function drawFireworksFx(allPts) {
+  allPts.forEach((pts, hi) => {
+    const hue = HAND_HUE[hi % 2];
+    TIPS.forEach((idx, fi) => {
+      const p = pts[idx];
+      const v = tipVel(hi, fi);
+      const key = `${hi}_${fi}`;
+      const prevSpd = fwPrevSpeed[key] || 0;
+
+      // burst on sudden acceleration
+      if (v.speed > 9 && prevSpd < 5) {
+        const n = Math.floor(rand(25, 55));
+        for (let i = 0; i < n && particles.length < MAX_PART; i++) {
+          const angle = rand(0, Math.PI * 2);
+          const spd   = rand(3, 14);
+          particles.push(new Particle(p.x, p.y, hue + fi * 25 + rand(-40, 40),
+            Math.cos(angle) * spd, Math.sin(angle) * spd));
+        }
+      }
+      fwPrevSpeed[key] = v.speed;
+
+      // continuous light trail
+      if (Math.random() < 0.3 + clamp(v.speed / 15, 0, 0.6))
+        spawnAt(p.x, p.y, hue + fi * 18, 2, v.vx * 0.2, v.vy * 0.2);
+
+      drawDot(p.x, p.y, hue + fi * 14);
+    });
+  });
+}
+
+// ── 🔮 ORBS ──────────────────────────────────────────────────────────────────
+function drawOrbsFx(allPts) {
+  const t = Date.now() / 1000;
+  allPts.forEach((pts, hi) => {
+    const hue = HAND_HUE[hi % 2];
+    TIPS.forEach((idx, fi) => {
+      const p   = pts[idx];
+      const key = `${hi}_${fi}`;
+      const orb = getOrb(key, p.x, p.y, hue + fi * 20);
+      orb.x     = lerp(orb.x, orb.tx, 0.12);   // smooth lag
+      orb.y     = lerp(orb.y, orb.ty, 0.12);
+      orb.angle += 0.04 + fi * 0.008;
+
+      const r = 32 + 10 * Math.sin(t * 2 + fi * 1.4);
+
+      // outer aura
+      ctx.save();
+      const g = ctx.createRadialGradient(orb.x, orb.y, 0, orb.x, orb.y, r * 3);
+      g.addColorStop(0,   `hsla(${orb.hue},100%,80%,0.35)`);
+      g.addColorStop(0.5, `hsla(${orb.hue},100%,60%,0.12)`);
+      g.addColorStop(1,   `hsla(${orb.hue},100%,50%,0)`);
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(orb.x, orb.y, r * 3, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+
+      // orbiting ring particles
+      for (let i = 0; i < 6; i++) {
+        const a   = orb.angle + (i / 6) * Math.PI * 2;
+        const rx  = orb.x + Math.cos(a) * r;
+        const ry  = orb.y + Math.sin(a) * r;
+        ctx.save();
+        ctx.shadowBlur = 14; ctx.shadowColor = `hsla(${orb.hue + i * 10},100%,70%,1)`;
+        ctx.fillStyle  = `hsla(${orb.hue + i * 10},100%,85%,0.85)`;
+        ctx.beginPath(); ctx.arc(rx, ry, 3.5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+      }
+
+      // core
+      drawDot(orb.x, orb.y, orb.hue, 16);
+    });
+  });
+
+  // connection lines between orbs of different hands
+  if (allPts.length >= 2) {
+    TIPS.forEach((_, fi) => {
+      const o0 = orbs[`0_${fi}`], o1 = orbs[`1_${fi}`];
+      if (!o0 || !o1) return;
+      const d = dist2d(o0, o1);
+      if (d > 500) return;
+      const alpha = Math.max(0, 1 - d / 500);
+      ctx.save(); ctx.globalAlpha = alpha * 0.6;
+      ctx.strokeStyle = `hsla(${250 + fi * 20},100%,70%,1)`;
+      ctx.lineWidth   = 2; ctx.shadowBlur = 16; ctx.shadowColor = `hsla(${250 + fi * 20},100%,65%,0.8)`;
+      ctx.beginPath(); ctx.moveTo(o0.x, o0.y); ctx.lineTo(o1.x, o1.y); ctx.stroke(); ctx.restore();
+    });
+  }
+}
+
+// ── 🌊 RIPPLE ─────────────────────────────────────────────────────────────────
+let ripplePrev = {};
+function drawRippleFx(allPts) {
+  allPts.forEach((pts, hi) => {
+    const hue = HAND_HUE[hi % 2];
+    TIPS.forEach((idx, fi) => {
+      const p   = pts[idx];
+      const key = `${hi}_${fi}`;
+      const v   = tipVel(hi, fi);
+      const prev = ripplePrev[key];
+
+      // spawn ripple when moving fast or on first appear
+      if (!prev || dist2d(p, prev) > 12) {
+        if (Math.random() < 0.25 + clamp(v.speed / 20, 0, 0.55))
+          ripples.push(new Ripple(p.x, p.y, hue + fi * 20));
+      }
+      ripplePrev[key] = { x: p.x, y: p.y };
+      drawDot(p.x, p.y, hue + fi * 14);
+    });
+  });
+  // interference glow between hands
+  if (allPts.length >= 2) {
+    TIPS.forEach((idx, fi) => {
+      const p0 = allPts[0][idx], p1 = allPts[1][idx];
+      const d  = dist2d(p0, p1);
+      if (d < 400) {
+        const mx = (p0.x + p1.x) / 2, my = (p0.y + p1.y) / 2;
+        const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 200 + fi);
+        const rg = ctx.createRadialGradient(mx, my, 0, mx, my, 60 * pulse);
+        rg.addColorStop(0, `hsla(${260 + fi * 20},100%,70%,0.4)`);
+        rg.addColorStop(1, `hsla(${260 + fi * 20},100%,50%,0)`);
+        ctx.save(); ctx.fillStyle = rg; ctx.beginPath();
+        ctx.arc(mx, my, 60 * pulse, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+      }
+    });
+  }
+}
+
+// ── Video draw ────────────────────────────────────────────────────────────────
+function drawVideo() {
+  if (video.readyState < 2) return;
+  vidCtx.save();
+  vidCtx.translate(W, 0); vidCtx.scale(-1, 1);
+  vidCtx.drawImage(video, 0, 0, W, H);
+  vidCtx.restore();
+}
+
+// ── Main render loop ─────────────────────────────────────────────────────────
+let lastResults = null;
+
+function render() {
+  requestAnimationFrame(render);
+  drawVideo();
+  ctx.clearRect(0, 0, W, H);
+
+  // particles (always persist until dead)
+  for (let i = particles.length - 1; i >= 0; i--) {
+    particles[i].update(); particles[i].draw();
+    if (particles[i].life <= 0) particles.splice(i, 1);
+  }
+
+  // ripples
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    ripples[i].update(); ripples[i].draw();
+    if (ripples[i].life <= 0) ripples.splice(i, 1);
+  }
+
+  // trails
+  if (activeFx === 'trails') {
+    for (const key of Object.keys(trails)) {
+      const pts = trails[key];
+      for (let i = 1; i < pts.length; i++) {
+        const a = pts[i - 1], b = pts[i], t = i / pts.length;
+        ctx.save(); ctx.globalAlpha = t * 0.8;
+        ctx.strokeStyle = `hsla(${b.hue},100%,70%,1)`;
+        ctx.lineWidth   = t * 7; ctx.shadowBlur = 10; ctx.shadowColor = `hsla(${b.hue},100%,60%,0.8)`;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); ctx.restore();
+      }
+    }
+  } else {
+    for (const k in trails) delete trails[k];
+  }
+
+  if (!lastResults || !lastResults.landmarks?.length) return;
+
+  const allPts = lastResults.landmarks.map(raw => raw.map(lm2s));
+  updateVelocity(allPts);
+
+  // palm glow
+  allPts.forEach((pts, hi) => {
+    const hue = HAND_HUE[hi % 2], palm = pts[0];
+    const pg = ctx.createRadialGradient(palm.x, palm.y, 0, palm.x, palm.y, 75);
+    pg.addColorStop(0, `hsla(${hue},100%,70%,0.15)`);
+    pg.addColorStop(1, `hsla(${hue},100%,50%,0)`);
+    ctx.save(); ctx.fillStyle = pg; ctx.beginPath();
+    ctx.arc(palm.x, palm.y, 75, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+  });
+
+  if (activeFx === 'web')       drawWeb(allPts);
+  if (activeFx === 'warp')      drawWarp(allPts);
+  if (activeFx === 'lightning') drawLightningFx(allPts);
+  if (activeFx === 'particles') drawParticlesFx(allPts);
+  if (activeFx === 'trails')    drawTrailsFx(allPts);
+  if (activeFx === 'rigging')   drawRigging(allPts);
+  if (activeFx === 'fireworks') drawFireworksFx(allPts);
+  if (activeFx === 'orbs')      drawOrbsFx(allPts);
+  if (activeFx === 'ripple')    drawRippleFx(allPts);
+}
+
+// ── MediaPipe ─────────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    statusEl.textContent = 'Loading model…';
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+    );
+    const landmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+        delegate: "GPU"
+      },
+      runningMode: "VIDEO",
+      numHands: 2,
+      minHandDetectionConfidence: 0.5,
+      minHandPresenceConfidence: 0.5,
+      minTrackingConfidence: 0.5,
+    });
+    statusEl.textContent = 'Starting camera…';
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 1280, height: 720, facingMode: 'user' }
+    });
+    video.srcObject = stream;
+    await video.play();
+    statusEl.textContent = 'Show your hands ✨';
+
+    let lastTime = -1;
+    function detect() {
+      requestAnimationFrame(detect);
+      if (video.readyState < 2) return;
+      const now = performance.now();
+      if (now === lastTime) return;
+      lastTime = now;
+      lastResults = landmarker.detectForVideo(video, now);
+      const n = lastResults.landmarks?.length ?? 0;
+      statusEl.textContent = n > 0 ? `${n} hand${n > 1 ? 's' : ''} detected ✨` : 'Show your hands ✨';
+    }
+    detect();
+  } catch (err) {
+    statusEl.textContent = `Error: ${err.message}`;
+    console.error(err);
+  }
+}
+
+render();
+init();
+</script>
+</body>
+</html>
