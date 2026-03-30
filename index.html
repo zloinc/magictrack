@@ -62,7 +62,7 @@ let W = 0, H = 0;
 function resize() {
   W = vidCanvas.width = fxCanvas.width  = window.innerWidth;
   H = vidCanvas.height = fxCanvas.height = window.innerHeight;
-  ripples.length = 0;
+  if (typeof ripples !== 'undefined') ripples.length = 0;
 }
 window.addEventListener('resize', resize); resize();
 
