@@ -412,67 +412,78 @@ function drawWarpLine(x1, y1, x2, y2, hue) {
 
   const t = Date.now() / 1000;
   const mix = clamp(1 - (d - 40) / 340, 0, 1);
-  const thick = 18 + mix * 26;
+  const thick = 22 + mix * 30;
   const angle = Math.atan2(y2 - y1, x2 - x1);
   const perpX = -Math.sin(angle), perpY = Math.cos(angle);
   const midX = (x1 + x2) * 0.5;
   const midY = (y1 + y2) * 0.5;
-  const wobble = Math.sin(t * 3.3 + hue * 0.03 + d * 0.01) * thick * 0.45;
-  const sag = thick * (0.35 + mix * 0.8);
+  const wobble = Math.sin(t * 2.7 + hue * 0.03 + d * 0.008) * thick * 0.38;
+  const sag = thick * (0.42 + mix * 0.92);
   const cx = midX + perpX * wobble;
   const cy = midY + perpY * wobble + sag;
+  const blobBulge = thick * (0.75 + mix * 0.45);
 
   const startHue = (hue - 35 + 360) % 360;
   const midHue = (hue + 28) % 360;
   const endHue = (hue + 95) % 360;
   const g = ctx.createLinearGradient(x1, y1, x2, y2);
-  g.addColorStop(0, `hsla(${startHue},100%,72%,${0.26 + mix * 0.16})`);
-  g.addColorStop(0.5, `hsla(${midHue},100%,76%,${0.32 + mix * 0.2})`);
-  g.addColorStop(1, `hsla(${endHue},100%,72%,${0.26 + mix * 0.16})`);
+  g.addColorStop(0, `hsla(${startHue},100%,70%,${0.28 + mix * 0.18})`);
+  g.addColorStop(0.5, `hsla(${midHue},100%,78%,${0.36 + mix * 0.22})`);
+  g.addColorStop(1, `hsla(${endHue},100%,70%,${0.28 + mix * 0.18})`);
 
   ctx.save();
   ctx.globalCompositeOperation = 'screen';
   ctx.beginPath();
-  ctx.moveTo(x1 + perpX * thick, y1 + perpY * thick);
-  ctx.quadraticCurveTo(cx + perpX * thick * 0.45, cy + perpY * thick * 0.45, x2 + perpX * thick, y2 + perpY * thick);
+  ctx.moveTo(x1 + perpX * thick * 0.86, y1 + perpY * thick * 0.86);
+  ctx.quadraticCurveTo(cx + perpX * blobBulge, cy + perpY * blobBulge, x2 + perpX * thick * 0.86, y2 + perpY * thick * 0.86);
   ctx.arc(x2, y2, thick, angle - Math.PI / 2, angle + Math.PI / 2);
-  ctx.quadraticCurveTo(cx - perpX * thick * 0.45, cy - perpY * thick * 0.45, x1 - perpX * thick, y1 - perpY * thick);
+  ctx.quadraticCurveTo(cx - perpX * blobBulge, cy - perpY * blobBulge, x1 - perpX * thick * 0.86, y1 - perpY * thick * 0.86);
   ctx.arc(x1, y1, thick, angle + Math.PI / 2, angle - Math.PI / 2);
   ctx.closePath();
   ctx.fillStyle = g;
-  ctx.shadowBlur = 26 + mix * 24;
-  ctx.shadowColor = `hsla(${midHue},100%,70%,0.65)`;
+  ctx.shadowBlur = 32 + mix * 30;
+  ctx.shadowColor = `hsla(${midHue},100%,68%,0.72)`;
   ctx.fill();
 
-  const core = ctx.createLinearGradient(x1, y1, x2, y2);
-  core.addColorStop(0, `hsla(${startHue},100%,92%,0.18)`);
-  core.addColorStop(0.5, `hsla(${midHue},100%,94%,${0.2 + mix * 0.18})`);
-  core.addColorStop(1, `hsla(${endHue},100%,92%,0.18)`);
+  const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, thick * 2.4);
+  core.addColorStop(0, `hsla(${midHue},100%,92%,${0.22 + mix * 0.16})`);
+  core.addColorStop(0.45, `hsla(${midHue + 18},100%,82%,0.18)`);
+  core.addColorStop(1, `hsla(${endHue},100%,60%,0)`);
   ctx.beginPath();
-  ctx.moveTo(x1 + perpX * thick * 0.45, y1 + perpY * thick * 0.45);
-  ctx.quadraticCurveTo(cx + perpX * thick * 0.18, cy + perpY * thick * 0.18, x2 + perpX * thick * 0.45, y2 + perpY * thick * 0.45);
-  ctx.quadraticCurveTo(cx - perpX * thick * 0.18, cy - perpY * thick * 0.18, x1 - perpX * thick * 0.45, y1 - perpY * thick * 0.45);
+  ctx.ellipse(cx, cy, thick * 1.18, thick * 0.88, angle, 0, Math.PI * 2);
   ctx.closePath();
   ctx.fillStyle = core;
   ctx.fill();
 
+  const slime = ctx.createLinearGradient(x1, y1, x2, y2);
+  slime.addColorStop(0, `hsla(${startHue + 10},100%,94%,0.12)`);
+  slime.addColorStop(0.5, `hsla(${midHue},100%,98%,${0.14 + mix * 0.12})`);
+  slime.addColorStop(1, `hsla(${endHue - 10},100%,94%,0.12)`);
   ctx.strokeStyle = `hsla(${midHue},100%,88%,${0.2 + mix * 0.2})`;
-  ctx.lineWidth = 1.2 + mix * 1.8;
-  ctx.shadowBlur = 10;
+  ctx.lineWidth = 1.6 + mix * 2.2;
+  ctx.shadowBlur = 14;
   ctx.shadowColor = `hsla(${endHue},100%,82%,0.7)`;
   ctx.beginPath();
   ctx.moveTo(x1, y1);
   ctx.quadraticCurveTo(cx, cy, x2, y2);
   ctx.stroke();
+  ctx.strokeStyle = slime;
+  ctx.lineWidth = 3.4 + mix * 2.4;
+  ctx.globalAlpha = 0.24 + mix * 0.12;
+  ctx.beginPath();
+  ctx.moveTo(x1 + perpX * thick * 0.08, y1 + perpY * thick * 0.08);
+  ctx.quadraticCurveTo(cx, cy + blobBulge * 0.12, x2 - perpX * thick * 0.08, y2 - perpY * thick * 0.08);
+  ctx.stroke();
 
-  for (let s = 0; s < 3; s++) {
-    const strandHue = (startHue + s * 48) % 360;
-    const strandOffset = (s - 1) * thick * 0.22;
+  for (let s = 0; s < 2; s++) {
+    const dripHue = (midHue + s * 26) % 360;
+    const dripPhase = t * 2.6 + s * 1.4 + hue * 0.02;
+    const dripLen = thick * (0.55 + Math.sin(dripPhase) * 0.18 + mix * 0.22);
     ctx.beginPath();
-    ctx.strokeStyle = `hsla(${strandHue},100%,80%,${0.16 + mix * 0.08})`;
-    ctx.lineWidth = 1 + s * 0.45;
-    ctx.moveTo(x1 + perpX * strandOffset, y1 + perpY * strandOffset);
-    ctx.quadraticCurveTo(cx + perpX * strandOffset * 0.65, cy + perpY * strandOffset * 0.65, x2 + perpX * strandOffset, y2 + perpY * strandOffset);
+    ctx.strokeStyle = `hsla(${dripHue},100%,78%,${0.16 + mix * 0.08})`;
+    ctx.lineWidth = 1.8 - s * 0.35;
+    ctx.moveTo(cx + perpX * (s === 0 ? thick * 0.16 : -thick * 0.12), cy + perpY * 0.08);
+    ctx.quadraticCurveTo(cx + perpX * (s === 0 ? thick * 0.34 : -thick * 0.28), cy + dripLen * 0.6, cx + perpX * (s === 0 ? thick * 0.1 : -thick * 0.08), cy + dripLen);
     ctx.stroke();
   }
   ctx.restore();
@@ -510,13 +521,22 @@ function getBolt(key, x1, y1, x2, y2, spread) {
 }
 function drawLightningLine(x1, y1, x2, y2, hue, key) {
   const d = dist2d({x:x1,y:y1},{x:x2,y:y2}), segs = getBolt(key,x1,y1,x2,y2,d*.14);
-  [5,1.5].forEach((lw, pass) => {
-    ctx.save(); ctx.globalAlpha = pass===0?.25:1;
-    ctx.strokeStyle = `hsla(${hue},100%,${pass===0?60:94}%,1)`; ctx.lineWidth = lw;
-    ctx.shadowBlur = pass===1?24:0; ctx.shadowColor = `hsla(${hue},100%,70%,1)`;
+  [
+    { lw: 12, alpha: 0.08, light: 50, blur: 34 },
+    { lw: 7, alpha: 0.16, light: 58, blur: 26 },
+    { lw: 3.6, alpha: 0.48, light: 74, blur: 16 },
+    { lw: 1.8, alpha: 1, light: 96, blur: 10 },
+  ].forEach(pass => {
+    ctx.save();
+    ctx.globalAlpha = pass.alpha;
+    ctx.strokeStyle = `hsla(${hue},100%,${pass.light}%,1)`;
+    ctx.lineWidth = pass.lw;
+    ctx.shadowBlur = pass.blur;
+    ctx.shadowColor = `hsla(${hue},100%,72%,1)`;
     ctx.beginPath();
     for (const [ax,ay,bx,by] of segs) { ctx.moveTo(ax,ay); ctx.lineTo(bx,by); }
-    ctx.stroke(); ctx.restore();
+    ctx.stroke();
+    ctx.restore();
   });
 }
 function drawLightningFx(handStates) {
