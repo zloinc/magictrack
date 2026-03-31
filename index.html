@@ -422,6 +422,9 @@ function drawWarpLine(x1, y1, x2, y2, hue) {
   const cx = midX + perpX * wobble;
   const cy = midY + perpY * wobble + sag;
   const blobBulge = thick * (0.75 + mix * 0.45);
+  const stretch = clamp((d - 190) / 120, 0, 1);
+  const breakMix = stretch * clamp((Math.sin(t * 4.2 + hue * 0.05 + d * 0.018) + 1) * 0.5, 0, 1);
+  const waistBulge = blobBulge * (1 - breakMix * 0.52);
 
   const startHue = (hue - 35 + 360) % 360;
   const midHue = (hue + 28) % 360;
@@ -435,9 +438,9 @@ function drawWarpLine(x1, y1, x2, y2, hue) {
   ctx.globalCompositeOperation = 'screen';
   ctx.beginPath();
   ctx.moveTo(x1 + perpX * thick * 0.86, y1 + perpY * thick * 0.86);
-  ctx.quadraticCurveTo(cx + perpX * blobBulge, cy + perpY * blobBulge, x2 + perpX * thick * 0.86, y2 + perpY * thick * 0.86);
+  ctx.quadraticCurveTo(cx + perpX * waistBulge, cy + perpY * waistBulge, x2 + perpX * thick * 0.86, y2 + perpY * thick * 0.86);
   ctx.arc(x2, y2, thick, angle - Math.PI / 2, angle + Math.PI / 2);
-  ctx.quadraticCurveTo(cx - perpX * blobBulge, cy - perpY * blobBulge, x1 - perpX * thick * 0.86, y1 - perpY * thick * 0.86);
+  ctx.quadraticCurveTo(cx - perpX * waistBulge, cy - perpY * waistBulge, x1 - perpX * thick * 0.86, y1 - perpY * thick * 0.86);
   ctx.arc(x1, y1, thick, angle + Math.PI / 2, angle - Math.PI / 2);
   ctx.closePath();
   ctx.fillStyle = g;
@@ -450,7 +453,7 @@ function drawWarpLine(x1, y1, x2, y2, hue) {
   core.addColorStop(0.45, `hsla(${midHue + 18},100%,82%,0.18)`);
   core.addColorStop(1, `hsla(${endHue},100%,60%,0)`);
   ctx.beginPath();
-  ctx.ellipse(cx, cy, thick * 1.18, thick * 0.88, angle, 0, Math.PI * 2);
+  ctx.ellipse(cx, cy, thick * (1.18 - breakMix * 0.34), thick * (0.88 - breakMix * 0.22), angle, 0, Math.PI * 2);
   ctx.closePath();
   ctx.fillStyle = core;
   ctx.fill();
@@ -488,6 +491,21 @@ function drawWarpLine(x1, y1, x2, y2, hue) {
     ctx.quadraticCurveTo(cx + perpX * (s === 0 ? thick * 0.34 : -thick * 0.28), cy + dripLen * 0.6, dripEndX, dripEndY);
     ctx.stroke();
     if (mix > 0.45 && Math.random() < 0.015) spawnAt(dripEndX, dripEndY, dripHue, 1, rand(-0.8, 0.8), rand(0.8, 1.6));
+  }
+  if (breakMix > 0.42) {
+    for (let i = 0; i < 2; i++) {
+      const dropHue = midHue + i * 18;
+      const dropX = cx + perpX * rand(-thick * 0.16, thick * 0.16);
+      const dropY = cy + thick * (0.55 + i * 0.28 + breakMix * 0.35);
+      const r = thick * (0.18 - i * 0.03);
+      const dropGrad = ctx.createRadialGradient(dropX, dropY, 0, dropX, dropY, r * 2.4);
+      dropGrad.addColorStop(0, `hsla(${dropHue},100%,92%,0.35)`);
+      dropGrad.addColorStop(1, `hsla(${dropHue},100%,56%,0)`);
+      ctx.fillStyle = dropGrad;
+      ctx.beginPath();
+      ctx.arc(dropX, dropY, r * 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
   ctx.restore();
 }
@@ -541,6 +559,24 @@ function drawLightningLine(x1, y1, x2, y2, hue, key) {
     ctx.stroke();
     ctx.restore();
   });
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const perpX = -Math.sin(angle), perpY = Math.cos(angle);
+  for (let side = -1; side <= 1; side += 2) {
+    const offset = 8 + Math.sin(Date.now() / 180 + hue * 0.04 + side) * 4;
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.strokeStyle = `hsla(${hue + side * 14},100%,76%,1)`;
+    ctx.lineWidth = 1.2;
+    ctx.shadowBlur = 14;
+    ctx.shadowColor = `hsla(${hue + side * 14},100%,74%,0.95)`;
+    ctx.beginPath();
+    for (const [ax,ay,bx,by] of segs) {
+      ctx.moveTo(ax + perpX * offset * side, ay + perpY * offset * side);
+      ctx.lineTo(bx + perpX * offset * side, by + perpY * offset * side);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 function drawLightningFx(handStates) {
   handStates.forEach(state => {
@@ -730,6 +766,16 @@ function drawPortalFx(handStates) {
     ctx.beginPath();
     ctx.ellipse(0, 0, rx + ring * 8, ry + ring * 4, 0, 0, Math.PI * 2);
     ctx.stroke();
+  }
+  for (let i = 0; i < 18; i++) {
+    const a = (i / 18) * Math.PI * 2 + t * 1.6;
+    const swirlX = Math.cos(a) * (rx + Math.sin(t * 2 + i) * 6);
+    const swirlY = Math.sin(a) * (ry + Math.cos(t * 2.4 + i) * 4);
+    const swirlHue = 190 + i * 7 + Math.sin(t * 3 + i) * 20;
+    ctx.fillStyle = `hsla(${swirlHue},100%,76%,0.22)`;
+    ctx.beginPath();
+    ctx.arc(swirlX, swirlY, 2.2 + Math.sin(t * 4 + i) * 0.6, 0, Math.PI * 2);
+    ctx.fill();
   }
   const core = ctx.createRadialGradient(0, 0, 0, 0, 0, rx * 1.15);
   core.addColorStop(0, 'rgba(255,255,255,0.2)');
