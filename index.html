@@ -479,12 +479,15 @@ function drawWarpLine(x1, y1, x2, y2, hue) {
     const dripHue = (midHue + s * 26) % 360;
     const dripPhase = t * 2.6 + s * 1.4 + hue * 0.02;
     const dripLen = thick * (0.55 + Math.sin(dripPhase) * 0.18 + mix * 0.22);
+    const dripEndX = cx + perpX * (s === 0 ? thick * 0.1 : -thick * 0.08);
+    const dripEndY = cy + dripLen;
     ctx.beginPath();
     ctx.strokeStyle = `hsla(${dripHue},100%,78%,${0.16 + mix * 0.08})`;
     ctx.lineWidth = 1.8 - s * 0.35;
     ctx.moveTo(cx + perpX * (s === 0 ? thick * 0.16 : -thick * 0.12), cy + perpY * 0.08);
-    ctx.quadraticCurveTo(cx + perpX * (s === 0 ? thick * 0.34 : -thick * 0.28), cy + dripLen * 0.6, cx + perpX * (s === 0 ? thick * 0.1 : -thick * 0.08), cy + dripLen);
+    ctx.quadraticCurveTo(cx + perpX * (s === 0 ? thick * 0.34 : -thick * 0.28), cy + dripLen * 0.6, dripEndX, dripEndY);
     ctx.stroke();
+    if (mix > 0.45 && Math.random() < 0.015) spawnAt(dripEndX, dripEndY, dripHue, 1, rand(-0.8, 0.8), rand(0.8, 1.6));
   }
   ctx.restore();
 }
@@ -541,26 +544,61 @@ function drawLightningLine(x1, y1, x2, y2, hue, key) {
 }
 function drawLightningFx(handStates) {
   handStates.forEach(state => {
-    const { hi, activeFingers } = state;
+    const { hi, pts, activeFingers, activeTipIndices } = state;
     const hue = HAND_HUE[hi%2];
+
+    const chainNodes = [];
+    const seen = new Set();
+    activeTipIndices.forEach(tipIdx => {
+      const chain = FINGER_CHAINS[tipIdx];
+      for (let i = 0; i < chain.length; i++) {
+        const idx = chain[i];
+        if (seen.has(idx)) continue;
+        seen.add(idx);
+        chainNodes.push({ idx, p: pts[idx] });
+      }
+      for (let i = 1; i < chain.length; i++) {
+        const a = pts[chain[i - 1]], b = pts[chain[i]];
+        drawLightningLine(a.x, a.y, b.x, b.y, hue + i * 8, `bone_${hi}_${chain[i - 1]}_${chain[i]}`);
+      }
+    });
+
+    for (let a = 0; a < chainNodes.length; a++) for (let b = a + 1; b < chainNodes.length; b++) {
+      const d = dist2d(chainNodes[a].p, chainNodes[b].p);
+      if (d > 110) continue;
+      if (Math.abs(chainNodes[a].idx - chainNodes[b].idx) > 5 && d > 70) continue;
+      drawLightningLine(chainNodes[a].p.x, chainNodes[a].p.y, chainNodes[b].p.x, chainNodes[b].p.y, hue + a * 6 + b * 5, `mesh_${hi}_${chainNodes[a].idx}_${chainNodes[b].idx}`);
+    }
+
     for (let a = 0; a < activeFingers.length; a++) for (let b = a+1; b < activeFingers.length; b++) {
-      if (b - a > 2) continue;
       if (dist2d(activeFingers[a].p, activeFingers[b].p) < 260)
         drawLightningLine(activeFingers[a].p.x,activeFingers[a].p.y,activeFingers[b].p.x,activeFingers[b].p.y, hue+(a+b)*10, `h${hi}_${activeFingers[a].idx}_${activeFingers[b].idx}`);
     }
     activeFingers.forEach(({ p, fi }) => drawDot(p.x, p.y, hue + fi * 14));
   });
   if (handStates.length >= 2) {
-    const active0 = handStates[0].activeFingers, active1 = handStates[1].activeFingers;
-    for (const f0 of active0) {
+    const getNodes = state => {
+      const out = [];
+      const seen = new Set();
+      state.activeTipIndices.forEach(tipIdx => {
+        FINGER_CHAINS[tipIdx].forEach(idx => {
+          if (seen.has(idx)) return;
+          seen.add(idx);
+          out.push({ idx, fi: TIPS.indexOf(tipIdx), p: state.pts[idx] });
+        });
+      });
+      return out;
+    };
+    const nodes0 = getNodes(handStates[0]), nodes1 = getNodes(handStates[1]);
+    for (const n0 of nodes0) {
       let best = null;
-      for (const f1 of active1) {
-        const d = dist2d(f0.p, f1.p);
+      for (const n1 of nodes1) {
+        const d = dist2d(n0.p, n1.p);
         if (d >= 420) continue;
-        if (!best || d < best.d) best = { f1, d };
+        if (!best || d < best.d) best = { n1, d };
       }
       if (best)
-        drawLightningLine(f0.p.x,f0.p.y,best.f1.p.x,best.f1.p.y, 220+f0.fi*16+best.f1.fi*22, `cross_${f0.idx}_${best.f1.idx}`);
+        drawLightningLine(n0.p.x,n0.p.y,best.n1.p.x,best.n1.p.y, 220+n0.fi*16+best.n1.fi*22, `cross_${n0.idx}_${best.n1.idx}`);
     }
   }
   for (const k in boltCache) if (boltCache[k].ttl <= 0) delete boltCache[k];
